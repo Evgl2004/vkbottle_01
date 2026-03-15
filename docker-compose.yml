@@ -1,0 +1,66 @@
+services:
+  bot:
+    build: .
+    container_name: vkbottle_bot_dev
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    command: ["python", "-m", "app.main"]
+    volumes:
+      - ./app:/app/app:ro
+      - ./docs:/app/docs:ro
+    networks:
+      - bot_network
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: vkbottle_postgres_dev
+    env_file:
+      - .env
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-vkbot}
+      POSTGRES_USER: ${POSTGRES_USER:-vkbot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-vkbot} -d ${POSTGRES_DB:-vkbot}"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - bot_network
+
+  redis:
+    image: redis:7-alpine
+    container_name: vkbottle_redis_dev
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - bot_network
+
+networks:
+  bot_network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
