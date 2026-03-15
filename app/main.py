@@ -53,13 +53,23 @@ def main() -> None:
 
     configure_logging()
     logger.info("Запуск VK-бота")
+    logger.info(
+        "Конфигурация запуска: env={}, log_level={}, group_id={}, admins_count={}",
+        settings.env,
+        settings.log_level,
+        settings.vk_group_id,
+        len(settings.admin_user_ids),
+    )
 
     state_dispenser = RedisStateDispenser.from_url(settings.redis_url)
+    logger.debug("Создан RedisStateDispenser")
     bot = Bot(token=settings.vk_bot_token, state_dispenser=state_dispenser)
     setup_handlers(bot)
+    logger.debug("Экземпляр Bot инициализирован")
 
     bot.loop_wrapper.on_startup.append(prepare_runtime())
     bot.loop_wrapper.on_shutdown.append(shutdown_infrastructure(state_dispenser))
+    logger.debug("Startup/Shutdown корутины зарегистрированы в LoopWrapper")
 
     bot.run_forever()
 

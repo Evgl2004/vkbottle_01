@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 from typing import Any, Optional
 
+from loguru import logger
 from redis.asyncio import Redis
 from vkbottle import ABCStateDispenser, BaseStateGroup, StatePeer
 
@@ -59,9 +60,16 @@ class RedisStateDispenser(ABCStateDispenser):
 
         raw = await self.redis.get(self._key(peer_id))
         if not raw:
+            logger.debug("StateDispenser.get: состояние не найдено (peer_id={})", peer_id)
             return None
 
         data = json.loads(raw)
+        logger.debug(
+            "StateDispenser.get: состояние загружено (peer_id={}, state={}, payload_keys={})",
+            peer_id,
+            data.get("state"),
+            list((data.get("payload") or {}).keys()),
+        )
         return StatePeer(
             peer_id=peer_id,
             state=data.get("state"),
@@ -79,6 +87,13 @@ class RedisStateDispenser(ABCStateDispenser):
             ensure_ascii=False,
         )
         key = self._key(peer_id)
+        logger.debug(
+            "StateDispenser.set: сохранение состояния (peer_id={}, state={}, payload_keys={}, ttl={})",
+            peer_id,
+            state,
+            list(payload.keys()),
+            self.ttl_seconds,
+        )
         if self.ttl_seconds is None:
             await self.redis.set(key, packed)
         else:
@@ -86,8 +101,10 @@ class RedisStateDispenser(ABCStateDispenser):
 
     async def delete(self, peer_id: int):
         """Удаляет состояние пользователя."""
+        logger.debug("StateDispenser.delete: удаление состояния (peer_id={})", peer_id)
         await self.redis.delete(self._key(peer_id))
 
     async def close(self) -> None:
         """Закрывает Redis-клиент диспансера."""
+        logger.debug("StateDispenser.close: закрытие Redis-клиента")
         await self.redis.aclose()

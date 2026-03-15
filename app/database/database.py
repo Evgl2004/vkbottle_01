@@ -70,6 +70,13 @@ class Database:
         - если записи нет, пользователь создается.
         """
 
+        logger.debug(
+            "DB add_or_update_user: user_id={}, username={}, first_name='{}', last_name='{}'",
+            user_id,
+            username,
+            first_name,
+            last_name,
+        )
         async with self.session_maker() as session:
             user = await session.get(User, user_id)
             if user:
@@ -80,6 +87,7 @@ class Database:
                 user.updated_at = datetime.now(timezone.utc)
                 await session.commit()
                 await session.refresh(user)
+                logger.debug("DB add_or_update_user: обновлена существующая запись (user_id={})", user_id)
                 return user
 
             user = User(
@@ -91,12 +99,15 @@ class Database:
             session.add(user)
             await session.commit()
             await session.refresh(user)
+            logger.info("DB add_or_update_user: создан новый пользователь (user_id={})", user_id)
             return user
 
     async def get_user(self, user_id: int) -> Optional[User]:
         """Возвращает пользователя по ID или `None`, если запись отсутствует."""
         async with self.session_maker() as session:
-            return await session.get(User, user_id)
+            user = await session.get(User, user_id)
+            logger.debug("DB get_user: user_id={}, found={}", user_id, bool(user))
+            return user
 
     async def update_user(self, user_id: int, **fields) -> Optional[User]:
         """Частично обновляет поля пользователя.
@@ -110,9 +121,11 @@ class Database:
         - при отсутствии пользователя возвращается `None`.
         """
 
+        logger.debug("DB update_user: user_id={}, fields={}", user_id, list(fields.keys()))
         async with self.session_maker() as session:
             user = await session.get(User, user_id)
             if not user:
+                logger.warning("DB update_user: пользователь не найден (user_id={})", user_id)
                 return None
 
             for key, value in fields.items():
@@ -128,6 +141,7 @@ class Database:
             user.updated_at = datetime.now(timezone.utc)
             await session.commit()
             await session.refresh(user)
+            logger.debug("DB update_user: обновление успешно (user_id={})", user_id)
             return user
 
     async def get_users_count(self) -> int:
@@ -157,13 +171,17 @@ class Database:
         """Возвращает список пользователей с флагом `is_moderator=True`."""
         async with self.session_maker() as session:
             result = await session.execute(select(User).where(User.is_moderator.is_(True)))
-            return list(result.scalars().all())
+            moderators = list(result.scalars().all())
+            logger.debug("DB get_moderators: count={}", len(moderators))
+            return moderators
 
     async def is_user_moderator(self, user_id: int) -> bool:
         """Проверяет, является ли пользователь модератором по данным БД."""
         async with self.session_maker() as session:
             user = await session.get(User, user_id)
-            return bool(user and user.is_moderator)
+            is_mod = bool(user and user.is_moderator)
+            logger.debug("DB is_user_moderator: user_id={}, is_moderator={}", user_id, is_mod)
+            return is_mod
 
     # -----------------------------------------------------------------
     # Статистика бота
@@ -199,6 +217,12 @@ class Database:
 
             await session.commit()
             await session.refresh(stats)
+            logger.debug(
+                "DB update_bot_stats: total_users={}, active_users={}, last_restart={}",
+                stats.total_users,
+                stats.active_users,
+                stats.last_restart,
+            )
             return stats
 
     # -----------------------------------------------------------------
@@ -212,6 +236,7 @@ class Database:
         user_first_name: Optional[str] = None,
     ) -> Ticket:
         """Создает новый тикет пользователя."""
+        logger.debug("DB create_ticket: user_id={}, user_username={}", user_id, user_username)
         async with self.session_maker() as session:
             ticket = Ticket(
                 user_id=user_id,
@@ -222,12 +247,15 @@ class Database:
             session.add(ticket)
             await session.commit()
             await session.refresh(ticket)
+            logger.info("DB create_ticket: создан тикет ticket_id={}, user_id={}", ticket.id, user_id)
             return ticket
 
     async def get_ticket(self, ticket_id: int) -> Optional[Ticket]:
         """Возвращает тикет по ID."""
         async with self.session_maker() as session:
-            return await session.get(Ticket, ticket_id)
+            ticket = await session.get(Ticket, ticket_id)
+            logger.debug("DB get_ticket: ticket_id={}, found={}", ticket_id, bool(ticket))
+            return ticket
 
     async def update_ticket_status(self, ticket_id: int, status: str) -> bool:
         """Обновляет статус тикета и связанные временные поля.
@@ -238,9 +266,11 @@ class Database:
         3. обновляется `updated_at`.
         """
 
+        logger.debug("DB update_ticket_status: ticket_id={}, new_status={}", ticket_id, status)
         async with self.session_maker() as session:
             ticket = await session.get(Ticket, ticket_id)
             if not ticket:
+                logger.warning("DB update_ticket_status: тикет не найден (ticket_id={})", ticket_id)
                 return False
 
             if status == "in_progress" and ticket.status == "open" and ticket.first_response_at is None:
@@ -252,6 +282,7 @@ class Database:
             ticket.status = status
             ticket.updated_at = datetime.now(timezone.utc)
             await session.commit()
+            logger.info("DB update_ticket_status: статус обновлён (ticket_id={}, status={})", ticket_id, status)
             return True
 
     async def close_ticket(self, ticket_id: int) -> bool:
@@ -266,6 +297,12 @@ class Database:
         message: str,
     ) -> TicketMessage:
         """Добавляет сообщение в историю диалога по тикету."""
+        logger.debug(
+            "DB add_ticket_message: ticket_id={}, sender_type={}, sender_id={}",
+            ticket_id,
+            sender_type,
+            sender_id,
+        )
         async with self.session_maker() as session:
             row = TicketMessage(
                 ticket_id=ticket_id,
@@ -276,6 +313,12 @@ class Database:
             session.add(row)
             await session.commit()
             await session.refresh(row)
+            logger.info(
+                "DB add_ticket_message: сообщение сохранено (message_id={}, ticket_id={}, sender_type={})",
+                row.id,
+                ticket_id,
+                sender_type,
+            )
             return row
 
     async def get_ticket_messages(self, ticket_id: int) -> List[TicketMessage]:
@@ -286,7 +329,9 @@ class Database:
                 .where(TicketMessage.ticket_id == ticket_id)
                 .order_by(TicketMessage.created_at.asc())
             )
-            return list(result.scalars().all())
+            messages = list(result.scalars().all())
+            logger.debug("DB get_ticket_messages: ticket_id={}, count={}", ticket_id, len(messages))
+            return messages
 
     async def get_tickets_page(
         self,
@@ -304,6 +349,13 @@ class Database:
         - `user_id`: если передан, выборка ограничивается тикетами пользователя.
         """
 
+        logger.debug(
+            "DB get_tickets_page: page={}, per_page={}, statuses={}, user_id={}",
+            page,
+            per_page,
+            statuses,
+            user_id,
+        )
         async with self.session_maker() as session:
             query = select(Ticket)
 
@@ -320,13 +372,23 @@ class Database:
 
             query = query.offset((page - 1) * per_page).limit(per_page)
             rows = await session.execute(query)
-            return list(rows.scalars().all()), total_count
+            tickets = list(rows.scalars().all())
+            logger.debug(
+                "DB get_tickets_page: fetched={}, total_count={}, page={}, per_page={}",
+                len(tickets),
+                total_count,
+                page,
+                per_page,
+            )
+            return tickets, total_count
 
     async def get_user_tickets_count(self, user_id: int) -> int:
         """Возвращает количество тикетов конкретного пользователя."""
         async with self.session_maker() as session:
             value = await session.scalar(select(func.count(Ticket.id)).where(Ticket.user_id == user_id))
-            return int(value or 0)
+            count = int(value or 0)
+            logger.debug("DB get_user_tickets_count: user_id={}, count={}", user_id, count)
+            return count
 
     async def get_tickets_stats(self) -> Tuple[int, int, Optional[float]]:
         """Возвращает сводную статистику тикетов.
@@ -337,6 +399,7 @@ class Database:
         3. среднее время первого ответа (в минутах), если доступно.
         """
 
+        logger.debug("DB get_tickets_stats")
         async with self.session_maker() as session:
             open_count = int(
                 (await session.scalar(select(func.count(Ticket.id)).where(Ticket.status == "open"))) or 0
@@ -360,6 +423,12 @@ class Database:
             row = (await session.execute(avg_query)).fetchone()
             avg_response = round(float(row[0]), 1) if row and row[0] is not None else None
 
+            logger.debug(
+                "DB get_tickets_stats: open_count={}, in_progress_count={}, avg_response={}",
+                open_count,
+                in_progress_count,
+                avg_response,
+            )
             return open_count, in_progress_count, avg_response
 
 

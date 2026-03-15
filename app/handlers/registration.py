@@ -49,8 +49,32 @@ from app.utils.validation import (
 )
 
 
+def _mask_phone(phone: str) -> str:
+    """Маскирует номер телефона для безопасного логирования.
+
+    Пример:
+    - `+79991234567` -> `+7*******567`
+    """
+
+    if len(phone) < 4:
+        return "***"
+    return f"{phone[:2]}*******{phone[-3:]}"
+
+
+def _mask_email(email: str) -> str:
+    """Маскирует email для безопасного логирования."""
+
+    if "@" not in email:
+        return "***"
+    local, domain = email.split("@", 1)
+    if not local:
+        return f"***@{domain}"
+    return f"{local[0]}***@{domain}"
+
+
 async def _show_review(message: Message) -> None:
     """Показывает пользователю экран проверки введённой анкеты."""
+    logger.debug("Показ экрана ревью анкеты (user_id={})", int(message.from_id))
     text = await get_profile_review_text(int(message.from_id))
     await message.answer(text, keyboard=get_review_keyboard())
 
@@ -75,6 +99,7 @@ async def _run_iiko_sync(message: Message, bot: Bot) -> None:
             result.message,
         )
         await bot.state_dispenser.set(user_id, RegistrationState.WAITING_FOR_IIKO_REGISTRATION)
+        logger.debug("Переход в WAITING_FOR_IIKO_REGISTRATION после ошибки (user_id={})", user_id)
         await message.answer(
             f"Ошибка синхронизации с iiko:\n{result.message}",
             keyboard=get_retry_iiko_keyboard(),
@@ -120,8 +145,10 @@ async def _run_iiko_sync(message: Message, bot: Bot) -> None:
         )
 
     await bot.state_dispenser.delete(user_id)
+    logger.debug("Состояние регистрации очищено после успешной синхронизации (user_id={})", user_id)
     refreshed = await db.get_user(user_id)
     await show_main_menu(message, user_name=(refreshed.first_name_input if refreshed else None) or "Гость")
+
 
 def register_registration_handlers(bot: Bot) -> None:
     """Регистрирует весь набор обработчиков регистрации."""
@@ -133,12 +160,16 @@ def register_registration_handlers(bot: Bot) -> None:
     async def process_rules_consent(message: Message) -> None:
         """Фиксирует согласие с правилами и переводит на шаг ввода телефона."""
 
+        user_id = int(message.from_id)
+        logger.info("Пользователь принял правила (user_id={})", user_id)
+
         await db.update_user(
-            int(message.from_id),
+            user_id,
             rules_accepted=True,
             rules_accepted_at=datetime.now(timezone.utc),
         )
-        await bot.state_dispenser.set(int(message.from_id), RegistrationState.WAITING_FOR_CONTACT)
+        await bot.state_dispenser.set(user_id, RegistrationState.WAITING_FOR_CONTACT)
+        logger.debug("Переход в WAITING_FOR_CONTACT (user_id={})", user_id)
         await message.answer(
             "Спасибо. Теперь введите номер телефона в формате +79991234567."
         )
@@ -154,11 +185,14 @@ def register_registration_handlers(bot: Bot) -> None:
     async def process_gender(message: Message) -> None:
         """Сохраняет выбранный пол и запрашивает дату рождения."""
 
+        user_id = int(message.from_id)
         command = message.get_payload_json().get("cmd")
         gender = "male" if command == CMD_GENDER_MALE else "female"
+        logger.info("Выбран пол в регистрации (user_id={}, gender={})", user_id, gender)
 
-        await db.update_user(int(message.from_id), gender=gender)
-        await bot.state_dispenser.set(int(message.from_id), RegistrationState.WAITING_FOR_BIRTH_DATE)
+        await db.update_user(user_id, gender=gender)
+        await bot.state_dispenser.set(user_id, RegistrationState.WAITING_FOR_BIRTH_DATE)
+        logger.debug("Переход в WAITING_FOR_BIRTH_DATE (user_id={})", user_id)
         await message.answer("Введите дату рождения в формате ДД.ММ.ГГГГ.")
 
     @bot.on.private_message(state=RegistrationState.WAITING_FOR_CONTACT)
@@ -172,15 +206,24 @@ def register_registration_handlers(bot: Bot) -> None:
         if not await confirm_text(message, "Введите номер телефона текстом (пример: +79991234567)."):
             return
 
+        user_id = int(message.from_id)
         text = message.text.strip()
+        logger.debug("Получен ввод телефона в регистрации (user_id={}, raw='{}')", user_id, text)
         valid, error = await validate_phone(text)
         if not valid:
+            logger.warning("Некорректный телефон в регистрации (user_id={}): {}", user_id, error)
             await message.answer(error)
             return
 
         normalized = await normalize_phone(text)
-        await db.update_user(int(message.from_id), phone_number=normalized)
-        await bot.state_dispenser.set(int(message.from_id), RegistrationState.WAITING_FOR_FIRST_NAME)
+        await db.update_user(user_id, phone_number=normalized)
+        logger.info(
+            "Телефон сохранён в регистрации (user_id={}, phone={})",
+            user_id,
+            _mask_phone(normalized),
+        )
+        await bot.state_dispenser.set(user_id, RegistrationState.WAITING_FOR_FIRST_NAME)
+        logger.debug("Переход в WAITING_FOR_FIRST_NAME (user_id={})", user_id)
         await message.answer("Телефон сохранён. Теперь введите ваше имя.")
 
     @bot.on.private_message(state=RegistrationState.WAITING_FOR_FIRST_NAME)
@@ -190,14 +233,20 @@ def register_registration_handlers(bot: Bot) -> None:
         if not await confirm_text(message, "Введите имя текстом."):
             return
 
+        user_id = int(message.from_id)
         text = message.text.strip()
+        logger.debug("Получено имя в регистрации (user_id={}, value='{}')", user_id, text)
         valid, error = await validate_first_name(text)
         if not valid:
+            logger.warning("Некорректное имя в регистрации (user_id={}): {}", user_id, error)
             await message.answer(error)
             return
 
-        await db.update_user(int(message.from_id), first_name_input=await clean_name(text))
-        await bot.state_dispenser.set(int(message.from_id), RegistrationState.WAITING_FOR_LAST_NAME)
+        cleaned = await clean_name(text)
+        await db.update_user(user_id, first_name_input=cleaned)
+        logger.info("Имя сохранено (user_id={}, value='{}')", user_id, cleaned)
+        await bot.state_dispenser.set(user_id, RegistrationState.WAITING_FOR_LAST_NAME)
+        logger.debug("Переход в WAITING_FOR_LAST_NAME (user_id={})", user_id)
         await message.answer("Имя сохранено. Теперь введите фамилию.")
 
     @bot.on.private_message(state=RegistrationState.WAITING_FOR_LAST_NAME)
@@ -207,14 +256,20 @@ def register_registration_handlers(bot: Bot) -> None:
         if not await confirm_text(message, "Введите фамилию текстом."):
             return
 
+        user_id = int(message.from_id)
         text = message.text.strip()
+        logger.debug("Получена фамилия в регистрации (user_id={}, value='{}')", user_id, text)
         valid, error = await validate_last_name(text)
         if not valid:
+            logger.warning("Некорректная фамилия в регистрации (user_id={}): {}", user_id, error)
             await message.answer(error)
             return
 
-        await db.update_user(int(message.from_id), last_name_input=await clean_name(text))
-        await bot.state_dispenser.set(int(message.from_id), RegistrationState.WAITING_FOR_GENDER)
+        cleaned = await clean_name(text)
+        await db.update_user(user_id, last_name_input=cleaned)
+        logger.info("Фамилия сохранена (user_id={}, value='{}')", user_id, cleaned)
+        await bot.state_dispenser.set(user_id, RegistrationState.WAITING_FOR_GENDER)
+        logger.debug("Переход в WAITING_FOR_GENDER (user_id={})", user_id)
         await message.answer("Фамилия сохранена. Выберите пол.", keyboard=get_gender_keyboard())
 
     @bot.on.private_message(state=RegistrationState.WAITING_FOR_BIRTH_DATE)
@@ -224,15 +279,20 @@ def register_registration_handlers(bot: Bot) -> None:
         if not await confirm_text(message, "Введите дату рождения текстом в формате ДД.ММ.ГГГГ."):
             return
 
+        user_id = int(message.from_id)
         text = message.text.strip()
+        logger.debug("Получена дата рождения в регистрации (user_id={}, value='{}')", user_id, text)
         valid, error = await validate_birth_date(text)
         if not valid:
+            logger.warning("Некорректная дата рождения (user_id={}): {}", user_id, error)
             await message.answer(error)
             return
 
         birth_date = datetime.strptime(text, "%d.%m.%Y").date()
-        await db.update_user(int(message.from_id), birth_date=birth_date)
-        await bot.state_dispenser.set(int(message.from_id), RegistrationState.WAITING_FOR_EMAIL)
+        await db.update_user(user_id, birth_date=birth_date)
+        logger.info("Дата рождения сохранена (user_id={}, birth_date={})", user_id, birth_date)
+        await bot.state_dispenser.set(user_id, RegistrationState.WAITING_FOR_EMAIL)
+        logger.debug("Переход в WAITING_FOR_EMAIL (user_id={})", user_id)
         await message.answer("Дата рождения сохранена. Теперь введите email.")
 
     @bot.on.private_message(state=RegistrationState.WAITING_FOR_EMAIL)
@@ -242,14 +302,19 @@ def register_registration_handlers(bot: Bot) -> None:
         if not await confirm_text(message, "Введите email текстом."):
             return
 
+        user_id = int(message.from_id)
         text = message.text.strip()
+        logger.debug("Получен email в регистрации (user_id={}, value='{}')", user_id, text)
         valid, error = await validate_email(text)
         if not valid:
+            logger.warning("Некорректный email в регистрации (user_id={}): {}", user_id, error)
             await message.answer(error)
             return
 
-        await db.update_user(int(message.from_id), email=text)
-        await bot.state_dispenser.set(int(message.from_id), RegistrationState.WAITING_FOR_REVIEW)
+        await db.update_user(user_id, email=text)
+        logger.info("Email сохранён (user_id={}, email={})", user_id, _mask_email(text))
+        await bot.state_dispenser.set(user_id, RegistrationState.WAITING_FOR_REVIEW)
+        logger.debug("Переход в WAITING_FOR_REVIEW (user_id={})", user_id)
         await _show_review(message)
 
     @bot.on.private_message(
@@ -258,10 +323,13 @@ def register_registration_handlers(bot: Bot) -> None:
     )
     async def review_ok(message: Message) -> None:
         """Обрабатывает подтверждение корректности анкеты."""
+        user_id = int(message.from_id)
+        logger.info("Анкета подтверждена пользователем (user_id={})", user_id)
         await bot.state_dispenser.set(
-            int(message.from_id),
+            user_id,
             RegistrationState.WAITING_FOR_NOTIFICATIONS_CONSENT,
         )
+        logger.debug("Переход в WAITING_FOR_NOTIFICATIONS_CONSENT (user_id={})", user_id)
         await message.answer(
             "Ознакомьтесь с условиями уведомлений и выберите вариант:",
             keyboard=get_notifications_keyboard(),
@@ -273,7 +341,10 @@ def register_registration_handlers(bot: Bot) -> None:
     )
     async def review_edit(message: Message) -> None:
         """Открывает выбор поля для редактирования анкеты."""
-        await bot.state_dispenser.set(int(message.from_id), RegistrationState.WAITING_FOR_EDIT_CHOICE)
+        user_id = int(message.from_id)
+        logger.info("Пользователь открыл редактирование анкеты (user_id={})", user_id)
+        await bot.state_dispenser.set(user_id, RegistrationState.WAITING_FOR_EDIT_CHOICE)
+        logger.debug("Переход в WAITING_FOR_EDIT_CHOICE (user_id={})", user_id)
         await message.answer("Выберите поле для редактирования:", keyboard=get_edit_choice_keyboard())
 
     @bot.on.private_message(state=RegistrationState.WAITING_FOR_EDIT_CHOICE)
@@ -283,30 +354,37 @@ def register_registration_handlers(bot: Bot) -> None:
         payload = message.get_payload_json()
         command = payload.get("cmd") if isinstance(payload, dict) else None
         user_id = int(message.from_id)
+        logger.debug("Выбор поля редактирования (user_id={}, cmd={})", user_id, command)
 
         if command == CMD_EDIT_CANCEL:
             await bot.state_dispenser.set(user_id, RegistrationState.WAITING_FOR_REVIEW)
+            logger.debug("Отмена редактирования, возврат в WAITING_FOR_REVIEW (user_id={})", user_id)
             await _show_review(message)
             return
 
         if command == CMD_EDIT_FIRST_NAME:
             await bot.state_dispenser.set(user_id, RegistrationState.WAITING_FOR_EDIT_FIRST_NAME)
+            logger.debug("Переход в WAITING_FOR_EDIT_FIRST_NAME (user_id={})", user_id)
             await message.answer("Введите новое имя.")
             return
         if command == CMD_EDIT_LAST_NAME:
             await bot.state_dispenser.set(user_id, RegistrationState.WAITING_FOR_EDIT_LAST_NAME)
+            logger.debug("Переход в WAITING_FOR_EDIT_LAST_NAME (user_id={})", user_id)
             await message.answer("Введите новую фамилию.")
             return
         if command == CMD_EDIT_GENDER:
             await bot.state_dispenser.set(user_id, RegistrationState.WAITING_FOR_EDIT_GENDER)
+            logger.debug("Переход в WAITING_FOR_EDIT_GENDER (user_id={})", user_id)
             await message.answer("Выберите пол.", keyboard=get_gender_keyboard())
             return
         if command == CMD_EDIT_BIRTH_DATE:
             await bot.state_dispenser.set(user_id, RegistrationState.WAITING_FOR_EDIT_BIRTH_DATE)
+            logger.debug("Переход в WAITING_FOR_EDIT_BIRTH_DATE (user_id={})", user_id)
             await message.answer("Введите новую дату рождения в формате ДД.ММ.ГГГГ.")
             return
         if command == CMD_EDIT_EMAIL:
             await bot.state_dispenser.set(user_id, RegistrationState.WAITING_FOR_EDIT_EMAIL)
+            logger.debug("Переход в WAITING_FOR_EDIT_EMAIL (user_id={})", user_id)
             await message.answer("Введите новый email.")
             return
 
@@ -315,27 +393,35 @@ def register_registration_handlers(bot: Bot) -> None:
     @bot.on.private_message(state=RegistrationState.WAITING_FOR_EDIT_FIRST_NAME)
     async def edit_first_name(message: Message) -> None:
         """Редактирует поле имени."""
+        user_id = int(message.from_id)
         if not await confirm_text(message, "Введите имя текстом."):
             return
         valid, error = await validate_first_name(message.text.strip())
         if not valid:
             await message.answer(error)
             return
-        await db.update_user(int(message.from_id), first_name_input=await clean_name(message.text.strip()))
-        await bot.state_dispenser.set(int(message.from_id), RegistrationState.WAITING_FOR_REVIEW)
+        cleaned = await clean_name(message.text.strip())
+        await db.update_user(user_id, first_name_input=cleaned)
+        logger.info("Обновлено имя в анкете (user_id={}, value='{}')", user_id, cleaned)
+        await bot.state_dispenser.set(user_id, RegistrationState.WAITING_FOR_REVIEW)
+        logger.debug("Возврат в WAITING_FOR_REVIEW (user_id={})", user_id)
         await _show_review(message)
 
     @bot.on.private_message(state=RegistrationState.WAITING_FOR_EDIT_LAST_NAME)
     async def edit_last_name(message: Message) -> None:
         """Редактирует поле фамилии."""
+        user_id = int(message.from_id)
         if not await confirm_text(message, "Введите фамилию текстом."):
             return
         valid, error = await validate_last_name(message.text.strip())
         if not valid:
             await message.answer(error)
             return
-        await db.update_user(int(message.from_id), last_name_input=await clean_name(message.text.strip()))
-        await bot.state_dispenser.set(int(message.from_id), RegistrationState.WAITING_FOR_REVIEW)
+        cleaned = await clean_name(message.text.strip())
+        await db.update_user(user_id, last_name_input=cleaned)
+        logger.info("Обновлена фамилия в анкете (user_id={}, value='{}')", user_id, cleaned)
+        await bot.state_dispenser.set(user_id, RegistrationState.WAITING_FOR_REVIEW)
+        logger.debug("Возврат в WAITING_FOR_REVIEW (user_id={})", user_id)
         await _show_review(message)
 
     @bot.on.private_message(
@@ -349,15 +435,19 @@ def register_registration_handlers(bot: Bot) -> None:
     async def edit_gender(message: Message) -> None:
         """Редактирует поле пола."""
 
+        user_id = int(message.from_id)
         cmd = message.get_payload_json().get("cmd")
         gender = "male" if cmd == CMD_GENDER_MALE else "female"
-        await db.update_user(int(message.from_id), gender=gender)
-        await bot.state_dispenser.set(int(message.from_id), RegistrationState.WAITING_FOR_REVIEW)
+        await db.update_user(user_id, gender=gender)
+        logger.info("Обновлён пол в анкете (user_id={}, gender={})", user_id, gender)
+        await bot.state_dispenser.set(user_id, RegistrationState.WAITING_FOR_REVIEW)
+        logger.debug("Возврат в WAITING_FOR_REVIEW (user_id={})", user_id)
         await _show_review(message)
 
     @bot.on.private_message(state=RegistrationState.WAITING_FOR_EDIT_BIRTH_DATE)
     async def edit_birth_date(message: Message) -> None:
         """Редактирует поле даты рождения."""
+        user_id = int(message.from_id)
         if not await confirm_text(message, "Введите дату рождения текстом."):
             return
         text = message.text.strip()
@@ -365,13 +455,17 @@ def register_registration_handlers(bot: Bot) -> None:
         if not valid:
             await message.answer(error)
             return
-        await db.update_user(int(message.from_id), birth_date=datetime.strptime(text, "%d.%m.%Y").date())
-        await bot.state_dispenser.set(int(message.from_id), RegistrationState.WAITING_FOR_REVIEW)
+        birth_date = datetime.strptime(text, "%d.%m.%Y").date()
+        await db.update_user(user_id, birth_date=birth_date)
+        logger.info("Обновлена дата рождения в анкете (user_id={}, birth_date={})", user_id, birth_date)
+        await bot.state_dispenser.set(user_id, RegistrationState.WAITING_FOR_REVIEW)
+        logger.debug("Возврат в WAITING_FOR_REVIEW (user_id={})", user_id)
         await _show_review(message)
 
     @bot.on.private_message(state=RegistrationState.WAITING_FOR_EDIT_EMAIL)
     async def edit_email(message: Message) -> None:
         """Редактирует поле email."""
+        user_id = int(message.from_id)
         if not await confirm_text(message, "Введите email текстом."):
             return
         text = message.text.strip()
@@ -379,8 +473,10 @@ def register_registration_handlers(bot: Bot) -> None:
         if not valid:
             await message.answer(error)
             return
-        await db.update_user(int(message.from_id), email=text)
-        await bot.state_dispenser.set(int(message.from_id), RegistrationState.WAITING_FOR_REVIEW)
+        await db.update_user(user_id, email=text)
+        logger.info("Обновлён email в анкете (user_id={}, email={})", user_id, _mask_email(text))
+        await bot.state_dispenser.set(user_id, RegistrationState.WAITING_FOR_REVIEW)
+        logger.debug("Возврат в WAITING_FOR_REVIEW (user_id={})", user_id)
         await _show_review(message)
 
     @bot.on.private_message(
@@ -394,19 +490,26 @@ def register_registration_handlers(bot: Bot) -> None:
     async def process_notifications(message: Message) -> None:
         """Сохраняет выбор по уведомлениям и запускает синхронизацию с iiko."""
 
+        user_id = int(message.from_id)
         command = message.get_payload_json().get("cmd")
         allowed = command == CMD_NOTIFY_YES
+        logger.info(
+            "Выбор уведомлений в регистрации (user_id={}, notifications_allowed={})",
+            user_id,
+            allowed,
+        )
 
         await db.update_user(
-            int(message.from_id),
+            user_id,
             notifications_allowed=allowed,
             notifications_allowed_at=datetime.now(timezone.utc),
         )
 
         await bot.state_dispenser.set(
-            int(message.from_id),
+            user_id,
             RegistrationState.WAITING_FOR_IIKO_REGISTRATION,
         )
+        logger.debug("Переход в WAITING_FOR_IIKO_REGISTRATION (user_id={})", user_id)
         await _run_iiko_sync(message, bot)
 
     @bot.on.private_message(
@@ -415,4 +518,5 @@ def register_registration_handlers(bot: Bot) -> None:
     )
     async def retry_iiko_sync(message: Message) -> None:
         """Повторно запускает iiko-синхронизацию после предыдущей ошибки."""
+        logger.info("Повторный запуск iiko-синхронизации (user_id={})", int(message.from_id))
         await _run_iiko_sync(message, bot)

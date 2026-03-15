@@ -47,6 +47,13 @@ async def _send_moderation_dashboard(message: Message) -> None:
 
     open_count, in_progress_count, avg_response = await ticket_service.get_tickets_stats()
     avg_text = f"{avg_response} мин" if avg_response is not None else "нет данных"
+    logger.debug(
+        "Показ дашборда модератора (moderator_id={}, open_count={}, in_progress_count={}, avg_response={})",
+        int(message.from_id),
+        open_count,
+        in_progress_count,
+        avg_text,
+    )
     await message.answer(
         "\n".join(
             [
@@ -69,11 +76,14 @@ def register_moderation_handlers(bot: Bot) -> None:
         """Открывает главное модераторское меню."""
 
         user_id = int(message.from_id)
+        logger.debug("Запрос открытия панели модератора (user_id={})", user_id)
         if not await is_moderator(user_id):
+            logger.warning("Отказ в доступе к панели модератора (user_id={})", user_id)
             await message.answer("У вас нет прав модератора.")
             return
 
         await bot.state_dispenser.delete(user_id)
+        logger.info("Открыта панель модератора (user_id={})", user_id)
         await _send_moderation_dashboard(message)
 
     @bot.on.private_message(payload_map={"cmd": CMD_MOD_TICKETS, "filter": str})
@@ -88,6 +98,12 @@ def register_moderation_handlers(bot: Bot) -> None:
         payload = extract_payload(message)
         filter_key = payload.get("filter", "all")
         statuses = FILTER_STATUS_MAP.get(filter_key, None)
+        logger.debug(
+            "Модератор запросил список тикетов (user_id={}, filter={}, statuses={})",
+            user_id,
+            filter_key,
+            statuses,
+        )
 
         tickets, total_count = await ticket_service.get_tickets_page(
             page=1,
@@ -102,6 +118,13 @@ def register_moderation_handlers(bot: Bot) -> None:
             return
 
         total_pages = (total_count + 10 - 1) // 10
+        logger.debug(
+            "Сформирован список тикетов модератора (user_id={}, filter={}, total_count={}, total_pages={})",
+            user_id,
+            filter_key,
+            total_count,
+            total_pages,
+        )
         await message.answer(
             f"{FILTER_TITLES.get(filter_key, 'Тикеты')} (страница 1/{total_pages}):",
             keyboard=get_moderation_tickets_keyboard(tickets, 1, total_pages, filter_key),
@@ -120,6 +143,12 @@ def register_moderation_handlers(bot: Bot) -> None:
         page = max(int(payload.get("page", 1)), 1)
         filter_key = payload.get("filter", "all")
         statuses = FILTER_STATUS_MAP.get(filter_key, None)
+        logger.debug(
+            "Запрошена страница тикетов модератора (user_id={}, filter={}, page={})",
+            user_id,
+            filter_key,
+            page,
+        )
 
         tickets, total_count = await ticket_service.get_tickets_page(
             page=page,
@@ -134,6 +163,13 @@ def register_moderation_handlers(bot: Bot) -> None:
             return
 
         total_pages = (total_count + 10 - 1) // 10
+        logger.debug(
+            "Сформирована страница тикетов модератора (user_id={}, page={}, total_pages={}, total_count={})",
+            user_id,
+            page,
+            total_pages,
+            total_count,
+        )
         await message.answer(
             f"{FILTER_TITLES.get(filter_key, 'Тикеты')} (страница {page}/{total_pages}):",
             keyboard=get_moderation_tickets_keyboard(tickets, page, total_pages, filter_key),
@@ -151,6 +187,12 @@ def register_moderation_handlers(bot: Bot) -> None:
         payload = extract_payload(message)
         ticket_id = int(payload.get("ticket_id"))
         filter_key = payload.get("filter", "all")
+        logger.debug(
+            "Запрошены детали тикета модератором (user_id={}, ticket_id={}, filter={})",
+            user_id,
+            ticket_id,
+            filter_key,
+        )
 
         ticket = await ticket_service.get_ticket(ticket_id)
         if not ticket:
@@ -158,6 +200,12 @@ def register_moderation_handlers(bot: Bot) -> None:
             return
 
         history = await ticket_service.get_ticket_messages(ticket_id)
+        logger.debug(
+            "Отправка деталей тикета модератору (user_id={}, ticket_id={}, history_count={})",
+            user_id,
+            ticket_id,
+            len(history),
+        )
         await message.answer(
             format_ticket_details(ticket, history),
             keyboard=get_moderation_ticket_details_keyboard(ticket_id, ticket.status, filter_key),
@@ -174,6 +222,7 @@ def register_moderation_handlers(bot: Bot) -> None:
 
         payload = extract_payload(message)
         ticket_id = int(payload.get("ticket_id"))
+        logger.info("Модератор начал ввод ответа (moderator_id={}, ticket_id={})", user_id, ticket_id)
         ticket = await ticket_service.get_ticket(ticket_id)
         if not ticket:
             await message.answer("Тикет не найден.")
@@ -187,6 +236,7 @@ def register_moderation_handlers(bot: Bot) -> None:
             TicketState.WAITING_FOR_MODERATOR_REPLY,
             ticket_id=ticket_id,
         )
+        logger.debug("Переход в WAITING_FOR_MODERATOR_REPLY (moderator_id={}, ticket_id={})", user_id, ticket_id)
         await message.answer(f"Введите ответ пользователю по тикету #{ticket_id}.")
 
     @bot.on.private_message(state=TicketState.WAITING_FOR_MODERATOR_REPLY)
@@ -208,6 +258,7 @@ def register_moderation_handlers(bot: Bot) -> None:
             return
 
         ticket_id = int(state_peer.payload.get("ticket_id", 0))
+        logger.info("Получен ответ модератора (moderator_id={}, ticket_id={})", user_id, ticket_id)
         ticket = await ticket_service.get_ticket(ticket_id)
         if not ticket:
             await bot.state_dispenser.delete(user_id)
@@ -222,6 +273,7 @@ def register_moderation_handlers(bot: Bot) -> None:
             message=reply_text,
         )
         await ticket_service.update_ticket_status(ticket_id, "in_progress")
+        logger.debug("Ответ модератора сохранён, статус обновлён (ticket_id={})", ticket_id)
 
         # Уведомляем пользователя.
         try:
@@ -250,6 +302,7 @@ def register_moderation_handlers(bot: Bot) -> None:
             ),
         )
         await bot.state_dispenser.delete(user_id)
+        logger.debug("Состояние WAITING_FOR_MODERATOR_REPLY очищено (moderator_id={})", user_id)
 
     @bot.on.private_message(payload_map={"cmd": CMD_MOD_CLOSE, "ticket_id": int})
     async def moderation_close_ticket(message: Message) -> None:
@@ -262,12 +315,15 @@ def register_moderation_handlers(bot: Bot) -> None:
 
         payload = extract_payload(message)
         ticket_id = int(payload.get("ticket_id"))
+        logger.info("Запрошено закрытие тикета модератором (moderator_id={}, ticket_id={})", user_id, ticket_id)
 
         ok = await ticket_service.close_ticket(ticket_id)
         if not ok:
+            logger.warning("Не удалось закрыть тикет: не найден (ticket_id={})", ticket_id)
             await message.answer("Не удалось закрыть тикет: запись не найдена.")
             return
 
+        logger.info("Тикет закрыт модератором (moderator_id={}, ticket_id={})", user_id, ticket_id)
         ticket = await ticket_service.get_ticket(ticket_id)
         history = await ticket_service.get_ticket_messages(ticket_id)
         await message.answer(

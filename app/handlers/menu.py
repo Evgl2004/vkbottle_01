@@ -41,6 +41,7 @@ from app.states.tickets import TicketState
 async def show_main_menu(message: Message, user_name: str = "Гость") -> None:
     """Отправляет пользователю главное меню."""
 
+    logger.debug("Показ главного меню (user_id={}, user_name='{}')", int(message.from_id), user_name)
     await message.answer(
         f"Здравствуйте, {user_name}.\nВы находитесь в главном меню. Выберите раздел:",
         keyboard=get_main_menu_keyboard(),
@@ -52,6 +53,7 @@ async def show_support_menu(message: Message) -> None:
 
     user_id = int(message.from_id)
     count = await ticket_service.get_user_tickets_count(user_id)
+    logger.debug("Показ меню поддержки (user_id={}, tickets_count={})", user_id, count)
     await message.answer(
         "Раздел «Отдел заботы».\nВыберите действие:",
         keyboard=get_support_keyboard(has_tickets=count > 0),
@@ -68,12 +70,21 @@ def register_menu_handlers(bot: Bot) -> None:
         """Открывает главное меню по payload-кнопке или текстовой команде."""
 
         user_id = int(message.from_id)
+        logger.debug("Запрошено открытие главного меню (user_id={})", user_id)
         user = await db.get_user(user_id)
         if not user:
+            logger.warning("Невозможно открыть меню: профиль не найден (user_id={})", user_id)
             await message.answer("Профиль не найден. Введите /start для повторной инициализации.")
             return
 
         if user.is_legacy or not user.rules_accepted or not user.is_registered:
+            logger.info(
+                "Отказ в открытии меню: регистрация не завершена (user_id={}, is_legacy={}, rules_accepted={}, is_registered={})",
+                user_id,
+                user.is_legacy,
+                user.rules_accepted,
+                user.is_registered,
+            )
             await message.answer(
                 "Чтобы открыть главное меню, сначала завершите регистрацию через /start."
             )
@@ -88,14 +99,17 @@ def register_menu_handlers(bot: Bot) -> None:
     async def open_support_menu(message: Message) -> None:
         """Открывает раздел поддержки."""
 
-        user = await db.get_user(int(message.from_id))
+        user_id = int(message.from_id)
+        logger.debug("Запрошено открытие раздела поддержки (user_id={})", user_id)
+        user = await db.get_user(user_id)
         if not user or user.is_legacy or not user.rules_accepted or not user.is_registered:
+            logger.info("Отказ в открытии поддержки: регистрация не завершена (user_id={})", user_id)
             await message.answer(
                 "Раздел поддержки доступен после завершения регистрации. Введите /start."
             )
             return
 
-        await bot.state_dispenser.delete(int(message.from_id))
+        await bot.state_dispenser.delete(user_id)
         await show_support_menu(message)
 
     @bot.on.private_message(payload_contains={"cmd": CMD_BALANCE})
@@ -126,6 +140,7 @@ def register_menu_handlers(bot: Bot) -> None:
             return
 
         balance = info.get("balance", 0)
+        logger.info("Показан бонусный баланс (user_id={}, balance={})", user_id, balance)
         await message.answer(
             "\n".join(
                 [
@@ -259,6 +274,7 @@ def register_menu_handlers(bot: Bot) -> None:
     async def show_vacancies(message: Message) -> None:
         """Показывает краткую информацию о вакансиях."""
 
+        logger.debug("Открыт раздел вакансий (user_id={})", int(message.from_id))
         await message.answer(
             "\n".join(
                 [
@@ -274,6 +290,7 @@ def register_menu_handlers(bot: Bot) -> None:
     async def show_feedback(message: Message) -> None:
         """Отправляет ссылку на форму обратной связи."""
 
+        logger.debug("Открыт раздел обратной связи (user_id={})", int(message.from_id))
         await message.answer(
             "Оставить отзыв можно по кнопке ниже.",
             keyboard=get_feedback_link_keyboard(),
@@ -283,6 +300,7 @@ def register_menu_handlers(bot: Bot) -> None:
     async def show_contacts(message: Message) -> None:
         """Показывает контактные данные компании."""
 
+        logger.debug("Открыт раздел контактов (user_id={})", int(message.from_id))
         await message.answer(
             "\n".join(
                 [
@@ -299,7 +317,9 @@ def register_menu_handlers(bot: Bot) -> None:
     async def start_question_flow(message: Message) -> None:
         """Запускает создание нового тикета из раздела поддержки."""
 
-        await bot.state_dispenser.set(int(message.from_id), TicketState.WAITING_FOR_QUESTION)
+        user_id = int(message.from_id)
+        logger.info("Переход в режим создания тикета (user_id={})", user_id)
+        await bot.state_dispenser.set(user_id, TicketState.WAITING_FOR_QUESTION)
         await message.answer(
             "Опишите ваш вопрос одним сообщением.\n"
             "Модератор увидит обращение и ответит в ближайшее время.",

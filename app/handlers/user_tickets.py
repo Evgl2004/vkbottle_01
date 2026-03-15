@@ -30,6 +30,11 @@ async def _notify_moderators(message: Message, text: str) -> None:
     """Рассылает служебное уведомление всем модераторам."""
 
     moderator_ids = await get_moderator_ids()
+    logger.debug(
+        "Рассылка уведомления модераторам (from_user_id={}, moderators_count={})",
+        int(message.from_id),
+        len(moderator_ids),
+    )
     for moderator_id in moderator_ids:
         try:
             await message.ctx_api.messages.send(
@@ -52,9 +57,11 @@ def register_user_ticket_handlers(bot: Bot) -> None:
             return
 
         user_id = int(message.from_id)
+        logger.info("Создание тикета из вопроса пользователя (user_id={})", user_id)
         user = await db.get_user(user_id)
         if not user:
             await bot.state_dispenser.delete(user_id)
+            logger.error("Невозможно создать тикет: пользователь не найден (user_id={})", user_id)
             await message.answer("Пользователь не найден. Введите /start для повторной инициализации.")
             return
 
@@ -64,6 +71,7 @@ def register_user_ticket_handlers(bot: Bot) -> None:
             user_username=user.username,
             user_first_name=user.first_name_input or user.first_name,
         )
+        logger.info("Создан тикет (ticket_id={}, user_id={})", ticket.id, user_id)
 
         await message.answer(
             "\n".join(
@@ -89,12 +97,14 @@ def register_user_ticket_handlers(bot: Bot) -> None:
         )
 
         await bot.state_dispenser.delete(user_id)
+        logger.debug("Состояние TicketState очищено после создания тикета (user_id={})", user_id)
 
     @bot.on.private_message(payload_contains={"cmd": CMD_MY_TICKETS})
     async def user_tickets_list(message: Message) -> None:
         """Показывает первую страницу списка обращений пользователя."""
 
         user_id = int(message.from_id)
+        logger.debug("Запрошен список тикетов пользователя (user_id={})", user_id)
         tickets, total_count = await ticket_service.get_tickets_page(
             page=1,
             per_page=5,
@@ -108,6 +118,12 @@ def register_user_ticket_handlers(bot: Bot) -> None:
             return
 
         total_pages = (total_count + 5 - 1) // 5
+        logger.debug(
+            "Сформирована первая страница тикетов пользователя (user_id={}, total_count={}, total_pages={})",
+            user_id,
+            total_count,
+            total_pages,
+        )
         await message.answer(
             f"Ваши обращения (страница 1/{total_pages}):",
             keyboard=get_user_tickets_list_keyboard(tickets, 1, total_pages),
@@ -120,6 +136,7 @@ def register_user_ticket_handlers(bot: Bot) -> None:
         payload = extract_payload(message)
         page = int(payload.get("page", 1))
         page = max(page, 1)
+        logger.debug("Запрошена страница тикетов пользователя (user_id={}, page={})", int(message.from_id), page)
 
         tickets, total_count = await ticket_service.get_tickets_page(
             page=page,
@@ -134,6 +151,13 @@ def register_user_ticket_handlers(bot: Bot) -> None:
             return
 
         total_pages = (total_count + 5 - 1) // 5
+        logger.debug(
+            "Сформирована страница тикетов пользователя (user_id={}, page={}, total_pages={}, total_count={})",
+            int(message.from_id),
+            page,
+            total_pages,
+            total_count,
+        )
         await message.answer(
             f"Ваши обращения (страница {page}/{total_pages}):",
             keyboard=get_user_tickets_list_keyboard(tickets, page, total_pages),
@@ -145,6 +169,7 @@ def register_user_ticket_handlers(bot: Bot) -> None:
 
         payload = extract_payload(message)
         ticket_id = int(payload.get("ticket_id"))
+        logger.debug("Запрошены детали тикета пользователем (user_id={}, ticket_id={})", int(message.from_id), ticket_id)
 
         ticket = await ticket_service.get_ticket(ticket_id)
         if not ticket or ticket.user_id != int(message.from_id):
@@ -152,6 +177,12 @@ def register_user_ticket_handlers(bot: Bot) -> None:
             return
 
         history = await ticket_service.get_ticket_messages(ticket_id)
+        logger.debug(
+            "Отправка деталей тикета пользователю (user_id={}, ticket_id={}, history_count={})",
+            int(message.from_id),
+            ticket_id,
+            len(history),
+        )
         await message.answer(
             format_ticket_details(ticket, history),
             keyboard=get_user_ticket_details_keyboard(ticket_id, ticket.status),
@@ -163,6 +194,7 @@ def register_user_ticket_handlers(bot: Bot) -> None:
 
         payload = extract_payload(message)
         ticket_id = int(payload.get("ticket_id"))
+        logger.info("Пользователь начал ввод ответа по тикету (user_id={}, ticket_id={})", int(message.from_id), ticket_id)
 
         ticket = await ticket_service.get_ticket(ticket_id)
         if not ticket or ticket.user_id != int(message.from_id):
@@ -177,6 +209,7 @@ def register_user_ticket_handlers(bot: Bot) -> None:
             TicketState.WAITING_FOR_USER_REPLY,
             ticket_id=ticket_id,
         )
+        logger.debug("Переход в WAITING_FOR_USER_REPLY (user_id={}, ticket_id={})", int(message.from_id), ticket_id)
         await message.answer(
             f"Введите ответ для тикета #{ticket_id}.",
             keyboard=get_user_ticket_details_keyboard(ticket_id, ticket.status),
@@ -196,6 +229,7 @@ def register_user_ticket_handlers(bot: Bot) -> None:
             return
 
         ticket_id = int(state_peer.payload.get("ticket_id", 0))
+        logger.info("Получен ответ пользователя по тикету (user_id={}, ticket_id={})", int(message.from_id), ticket_id)
         ticket = await ticket_service.get_ticket(ticket_id)
         if not ticket or ticket.user_id != int(message.from_id):
             await bot.state_dispenser.delete(int(message.from_id))
@@ -209,9 +243,11 @@ def register_user_ticket_handlers(bot: Bot) -> None:
             sender_id=int(message.from_id),
             message=text,
         )
+        logger.debug("Сообщение пользователя добавлено в тикет (ticket_id={})", ticket_id)
 
         if ticket.status == "open":
             await ticket_service.update_ticket_status(ticket_id, "in_progress")
+            logger.debug("Статус тикета переведен в in_progress (ticket_id={})", ticket_id)
 
         await _notify_moderators(
             message,
@@ -234,3 +270,4 @@ def register_user_ticket_handlers(bot: Bot) -> None:
             ),
         )
         await bot.state_dispenser.delete(int(message.from_id))
+        logger.debug("Состояние WAITING_FOR_USER_REPLY очищено (user_id={})", int(message.from_id))

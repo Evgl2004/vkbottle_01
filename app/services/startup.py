@@ -33,8 +33,11 @@ async def prepare_runtime() -> None:
       передаётся в `Bot` заранее.
     """
 
+    logger.info("Подготовка инфраструктуры: старт")
+
     await db.create_tables()
     await db.update_bot_stats()
+    logger.debug("База данных и статистика инициализированы")
 
     redis_client = Redis.from_url(settings.redis_url, decode_responses=True)
     await redis_client.ping()
@@ -42,6 +45,7 @@ async def prepare_runtime() -> None:
     logger.info("Подключение к Redis подтверждено")
 
     await iiko_service.init_iiko_client()
+    logger.info("Подготовка инфраструктуры: завершена")
 
 
 async def prepare_infrastructure() -> RedisStateDispenser:
@@ -67,5 +71,7 @@ async def shutdown_infrastructure(state_dispenser: RedisStateDispenser) -> None:
     2. Закрыть Redis-соединение state dispenser.
     """
 
+    logger.info("Остановка инфраструктуры: старт")
     await iiko_service.close_iiko_client()
     await state_dispenser.close()
+    logger.info("Остановка инфраструктуры: завершена")
