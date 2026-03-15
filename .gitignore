@@ -11,6 +11,8 @@ __pycache__/
 .venv/
 venv/
 env/
+.virtualenv-app-data/
+.tmp/
 
 # Tooling caches
 .mypy_cache/
