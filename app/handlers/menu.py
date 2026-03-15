@@ -1,7 +1,15 @@
-"""Хендлеры главного меню и раздела поддержки."""
+"""Хендлеры главного меню и раздела поддержки.
+
+Модуль отвечает за пользовательские разделы после регистрации:
+1. Главное меню.
+2. Отдел заботы (поддержка и тикеты).
+3. Показ бонусного баланса.
+4. Показ виртуальных карт и отправка QR-кодов карт в чат.
+"""
 
 from __future__ import annotations
 
+from loguru import logger
 from vkbottle.bot import Bot, Message
 
 from app.database import db
@@ -26,16 +34,12 @@ from app.keyboards.payloads import (
 )
 from app.services import iiko_service
 from app.services.tickets import ticket_service
+from app.services.vk_qr import send_card_qr
 from app.states.tickets import TicketState
 
 
 async def show_main_menu(message: Message, user_name: str = "Гость") -> None:
-    """Отправляет пользователю главное меню.
-
-    Параметр `user_name` вынесен отдельно, чтобы:
-    - использовать имя из анкеты (приоритетно);
-    - fallback на дефолтный вариант при отсутствии данных.
-    """
+    """Отправляет пользователю главное меню."""
 
     await message.answer(
         f"Здравствуйте, {user_name}.\nВы находитесь в главном меню. Выберите раздел:",
@@ -62,24 +66,28 @@ def register_menu_handlers(bot: Bot) -> None:
     @bot.on.private_message(text=["menu", "меню", "главное меню"])
     async def open_main_menu(message: Message) -> None:
         """Открывает главное меню по payload-кнопке или текстовой команде."""
-        user = await db.get_user(int(message.from_id))
+
+        user_id = int(message.from_id)
+        user = await db.get_user(user_id)
         if not user:
             await message.answer("Профиль не найден. Введите /start для повторной инициализации.")
             return
+
         if user.is_legacy or not user.rules_accepted or not user.is_registered:
             await message.answer(
                 "Чтобы открыть главное меню, сначала завершите регистрацию через /start."
             )
             return
 
-        user_name = (user.first_name_input if user else None) or "Гость"
-        await bot.state_dispenser.delete(int(message.from_id))
+        user_name = user.first_name_input or "Гость"
+        await bot.state_dispenser.delete(user_id)
         await show_main_menu(message, user_name=user_name)
 
     @bot.on.private_message(payload_contains={"cmd": CMD_SUPPORT})
     @bot.on.private_message(payload_contains={"cmd": CMD_BACK_TO_SUPPORT})
     async def open_support_menu(message: Message) -> None:
         """Открывает раздел поддержки."""
+
         user = await db.get_user(int(message.from_id))
         if not user or user.is_legacy or not user.rules_accepted or not user.is_registered:
             await message.answer(
@@ -94,16 +102,23 @@ def register_menu_handlers(bot: Bot) -> None:
     async def show_balance(message: Message) -> None:
         """Показывает баланс бонусов пользователя по данным iiko."""
 
-        user = await db.get_user(int(message.from_id))
+        user_id = int(message.from_id)
+        user = await db.get_user(user_id)
         if not user or not user.phone_number:
+            logger.warning(
+                "Запрос баланса отклонён: отсутствует телефон пользователя (user_id={})",
+                user_id,
+            )
             await message.answer(
                 "Номер телефона не найден. Пожалуйста, пройдите регистрацию заново через команду /start.",
                 keyboard=get_back_to_main_keyboard(),
             )
             return
 
+        logger.debug("Запрошен бонусный баланс (user_id={})", user_id)
         info = await iiko_service.get_customer_info(user.phone_number)
         if not info:
+            logger.error("Не удалось получить бонусный баланс из iiko (user_id={})", user_id)
             await message.answer(
                 "Не удалось получить баланс бонусов. Попробуйте позже.",
                 keyboard=get_back_to_main_keyboard(),
@@ -124,13 +139,25 @@ def register_menu_handlers(bot: Bot) -> None:
 
     @bot.on.private_message(payload_contains={"cmd": CMD_VIRTUAL_CARD})
     async def show_virtual_cards(message: Message) -> None:
-        """Показывает список карт пользователя.
+        """Показывает карты пользователя и отправляет QR-коды карт.
 
-        Если карт нет, запускается выпуск новой карты через iiko.
+        Поведение:
+        1. Пытаемся получить клиента/карты из iiko.
+        2. Если клиента нет — регистрируем.
+        3. Если карт нет — выпускаем новую.
+        4. Отправляем список карт текстом.
+        5. Отправляем QR-картинку для каждой найденной карты.
         """
 
-        user = await db.get_user(int(message.from_id))
+        user_id = int(message.from_id)
+        logger.debug("Запрошен раздел виртуальных карт (user_id={})", user_id)
+
+        user = await db.get_user(user_id)
         if not user or not user.phone_number:
+            logger.warning(
+                "Невозможно показать виртуальные карты: у пользователя нет телефона (user_id={})",
+                user_id,
+            )
             await message.answer(
                 "Телефон пользователя не найден. Пройдите регистрацию через /start.",
                 keyboard=get_back_to_main_keyboard(),
@@ -139,8 +166,17 @@ def register_menu_handlers(bot: Bot) -> None:
 
         info = await iiko_service.get_customer_info(user.phone_number)
         if info is None:
+            logger.debug(
+                "Клиент не найден в iiko, запускаем регистрацию (user_id={})",
+                user_id,
+            )
             customer_id, msg = await iiko_service.register_customer(user)
             if not customer_id:
+                logger.error(
+                    "Ошибка регистрации клиента в iiko при запросе карт (user_id={}): {}",
+                    user_id,
+                    msg,
+                )
                 await message.answer(
                     f"Не удалось зарегистрировать клиента в iiko.\nПричина: {msg}",
                     keyboard=get_back_to_main_keyboard(),
@@ -149,20 +185,38 @@ def register_menu_handlers(bot: Bot) -> None:
             info = {"customer_id": customer_id, "cards": []}
 
         cards = info.get("cards", []) or []
+        logger.debug(
+            "Получены данные карт из iiko (user_id={}, cards_count={})",
+            user_id,
+            len(cards),
+        )
+
         if not cards:
+            logger.debug("Карт нет, запускаем выпуск новой карты (user_id={})", user_id)
             ok, msg, card_number = await iiko_service.issue_card_for_customer(
                 user.phone_number,
                 info["customer_id"],
             )
             if not ok:
+                logger.error(
+                    "Ошибка выпуска карты iiko (user_id={}): {}",
+                    user_id,
+                    msg,
+                )
                 await message.answer(
                     f"Не удалось выпустить карту.\nПричина: {msg}",
                     keyboard=get_back_to_main_keyboard(),
                 )
                 return
             cards = [{"number": card_number}] if card_number else []
+            logger.debug(
+                "Выпуск карты завершён (user_id={}, cards_count_after_issue={})",
+                user_id,
+                len(cards),
+            )
 
         if not cards:
+            logger.warning("После выпуска карта не найдена (user_id={})", user_id)
             await message.answer(
                 "Карты не найдены. Обратитесь к администратору.",
                 keyboard=get_back_to_main_keyboard(),
@@ -175,9 +229,36 @@ def register_menu_handlers(bot: Bot) -> None:
             keyboard=get_back_to_main_keyboard(),
         )
 
+        sent_qr_count = 0
+        for idx, card in enumerate(cards, start=1):
+            card_number = (card.get("number") or "").strip()
+            if not card_number:
+                logger.debug(
+                    "Пропуск карты без номера при отправке QR (user_id={}, idx={})",
+                    user_id,
+                    idx,
+                )
+                continue
+
+            if await send_card_qr(message, card_number, title=f"QR-код карты №{idx}"):
+                sent_qr_count += 1
+
+        logger.debug(
+            "Отправка QR завершена (user_id={}, sent_qr_count={}, cards_count={})",
+            user_id,
+            sent_qr_count,
+            len(cards),
+        )
+        if sent_qr_count == 0:
+            await message.answer(
+                "Не удалось сформировать QR-код карты. Попробуйте позже или обратитесь в поддержку.",
+                keyboard=get_back_to_main_keyboard(),
+            )
+
     @bot.on.private_message(payload_contains={"cmd": CMD_VACANCIES})
     async def show_vacancies(message: Message) -> None:
         """Показывает краткую информацию о вакансиях."""
+
         await message.answer(
             "\n".join(
                 [
@@ -192,6 +273,7 @@ def register_menu_handlers(bot: Bot) -> None:
     @bot.on.private_message(payload_contains={"cmd": CMD_SUPPORT_FEEDBACK})
     async def show_feedback(message: Message) -> None:
         """Отправляет ссылку на форму обратной связи."""
+
         await message.answer(
             "Оставить отзыв можно по кнопке ниже.",
             keyboard=get_feedback_link_keyboard(),
@@ -200,6 +282,7 @@ def register_menu_handlers(bot: Bot) -> None:
     @bot.on.private_message(payload_contains={"cmd": CMD_SUPPORT_CONTACTS})
     async def show_contacts(message: Message) -> None:
         """Показывает контактные данные компании."""
+
         await message.answer(
             "\n".join(
                 [

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from loguru import logger
+
 from vkbottle.bot import Bot, Message
 
 from app.database import db
@@ -32,6 +34,7 @@ from app.keyboards.payloads import (
     CMD_REVIEW_OK,
 )
 from app.services.user_sync import sync_user_with_iiko
+from app.services.vk_qr import send_card_qr
 from app.states.registration import RegistrationState
 from app.utils.profile import get_profile_review_text
 from app.utils.validation import (
@@ -56,6 +59,8 @@ async def _run_iiko_sync(message: Message, bot: Bot) -> None:
     """Запускает синхронизацию пользователя с iiko и завершает регистрацию."""
 
     user_id = int(message.from_id)
+    logger.debug("Старт синхронизации с iiko в регистрации (user_id={})", user_id)
+
     user = await db.get_user(user_id)
     if not user:
         await bot.state_dispenser.delete(user_id)
@@ -64,12 +69,23 @@ async def _run_iiko_sync(message: Message, bot: Bot) -> None:
 
     result = await sync_user_with_iiko(user)
     if not result.success:
+        logger.error(
+            "Синхронизация с iiko завершилась ошибкой (user_id={}): {}",
+            user_id,
+            result.message,
+        )
         await bot.state_dispenser.set(user_id, RegistrationState.WAITING_FOR_IIKO_REGISTRATION)
         await message.answer(
             f"Ошибка синхронизации с iiko:\n{result.message}",
             keyboard=get_retry_iiko_keyboard(),
         )
         return
+
+    logger.debug(
+        "Синхронизация с iiko успешна (user_id={}, cards_count={})",
+        user_id,
+        len(result.card_numbers),
+    )
 
     card_text = (
         "\n".join(f"- {number}" for number in result.card_numbers)
@@ -86,10 +102,26 @@ async def _run_iiko_sync(message: Message, bot: Bot) -> None:
             ]
         )
     )
+
+    sent_qr_count = 0
+    for idx, card_number in enumerate(result.card_numbers, start=1):
+        if await send_card_qr(message, card_number, title=f"QR-код карты №{idx}"):
+            sent_qr_count += 1
+
+    logger.debug(
+        "Завершена отправка QR после регистрации (user_id={}, sent_qr_count={}, cards_count={})",
+        user_id,
+        sent_qr_count,
+        len(result.card_numbers),
+    )
+    if result.card_numbers and sent_qr_count == 0:
+        await message.answer(
+            "Не удалось сформировать QR-код карты. Попробуйте открыть раздел «Виртуальная карта» чуть позже."
+        )
+
     await bot.state_dispenser.delete(user_id)
     refreshed = await db.get_user(user_id)
     await show_main_menu(message, user_name=(refreshed.first_name_input if refreshed else None) or "Гость")
-
 
 def register_registration_handlers(bot: Bot) -> None:
     """Регистрирует весь набор обработчиков регистрации."""
