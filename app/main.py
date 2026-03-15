@@ -1,10 +1,9 @@
 """Точка входа приложения VK-бота.
 
-Файл отвечает за:
-1. настройку логирования;
-2. подготовку инфраструктуры (PostgreSQL, Redis, iiko);
-3. создание экземпляра `Bot` и регистрацию хендлеров;
-4. запуск long polling.
+Модуль отвечает за запуск процесса в корректном асинхронном режиме.
+Ключевая задача: гарантировать, что инфраструктура (PostgreSQL, Redis, iiko)
+инициализируется и используется в том же event loop, где работают хендлеры
+vkbottle. Это исключает ошибки межцикловой работы asyncio.
 """
 
 from __future__ import annotations
@@ -13,9 +12,8 @@ import asyncio
 import os
 import sys
 
-# Важно установить переменную ДО импорта vkbottle:
-# иначе внутри vkbottle может включиться логгер с enqueue=True,
-# который в некоторых окружениях даёт PermissionError.
+# Переменную важно выставить до импорта vkbottle,
+# чтобы избежать проблем с loguru enqueue в отдельных окружениях.
 os.environ.setdefault("LOGURU_AUTOINIT", "1")
 
 from loguru import logger
@@ -27,7 +25,7 @@ from app.services import prepare_infrastructure, shutdown_infrastructure
 
 
 def configure_logging() -> None:
-    """Настраивает формат и уровень логирования процесса."""
+    """Настраивает единый формат логирования процесса."""
     logger.remove()
     logger.add(
         sys.stdout,
@@ -37,21 +35,48 @@ def configure_logging() -> None:
     )
 
 
-def main() -> None:
-    """Запускает приложение в режиме long polling."""
+async def run_bot() -> None:
+    """Запускает бота в едином event loop.
 
-    configure_logging()
-    logger.info("Запуск VK-бота")
+    Почему это важно:
+    1. SQLAlchemy async/asyncpg, Redis-клиент и aiohttp-сессии iiko должны жить
+       в одном цикле событий.
+    2. Если подготовка инфраструктуры выполняется через отдельный `asyncio.run`,
+       а polling стартует в другом loop, возможны ошибки вида:
+       - `Future attached to a different loop`
+       - `Event loop is closed`
 
-    state_dispenser = asyncio.run(prepare_infrastructure())
+    Сценарий выполнения:
+    1. Подготовить инфраструктуру.
+    2. Создать экземпляр `Bot` и зарегистрировать хендлеры.
+    3. Запустить polling.
+    4. При остановке гарантированно закрыть инфраструктурные ресурсы.
+    """
+
+    state_dispenser = await prepare_infrastructure()
     bot = Bot(token=settings.vk_bot_token, state_dispenser=state_dispenser)
     setup_handlers(bot)
 
     try:
-        bot.run_forever()
+        await bot.run_polling()
     finally:
-        asyncio.run(shutdown_infrastructure(state_dispenser))
+        await shutdown_infrastructure(state_dispenser)
         logger.info("Приложение остановлено корректно")
+
+
+def main() -> None:
+    """Синхронная точка входа процесса.
+
+    Функция только настраивает логирование и запускает единый async-контур.
+    """
+
+    configure_logging()
+    logger.info("Запуск VK-бота")
+
+    try:
+        asyncio.run(run_bot())
+    except KeyboardInterrupt:
+        logger.info("Получен сигнал остановки (KeyboardInterrupt)")
 
 
 if __name__ == "__main__":
