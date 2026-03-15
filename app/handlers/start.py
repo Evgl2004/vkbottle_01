@@ -32,7 +32,7 @@ async def _handle_start_logic(message: Message, bot: Bot) -> None:
     user = await db.get_user(user_id)
     if not user:
         logger.error("Пользователь не найден после апсерта (user_id={})", user_id)
-        await message.answer("Не удалось инициализировать профиль пользователя.")
+        await message.answer("❌ Не удалось инициализировать профиль пользователя.")
         return
 
     # Ветка legacy-обновления.
@@ -46,6 +46,7 @@ async def _handle_start_logic(message: Message, bot: Bot) -> None:
         logger.debug("Переход в WAITING_FOR_RULES_CONSENT (user_id={})", user_id)
         await bot.state_dispenser.set(user_id, RegistrationState.WAITING_FOR_RULES_CONSENT)
         await message.answer(
+            "👋 Добро пожаловать!\n\n"
             "Перед началом работы подтвердите согласие с правилами и обработкой персональных данных.",
             keyboard=get_rules_keyboard(),
         )
@@ -55,7 +56,7 @@ async def _handle_start_logic(message: Message, bot: Bot) -> None:
     if not user.is_registered:
         logger.debug("Переход в WAITING_FOR_CONTACT (user_id={})", user_id)
         await bot.state_dispenser.set(user_id, RegistrationState.WAITING_FOR_CONTACT)
-        await message.answer("Введите номер телефона в формате +79991234567.")
+        await message.answer("📱 Введите номер телефона в формате +79991234567.")
         return
 
     # Пользователь уже зарегистрирован.
@@ -79,10 +80,10 @@ def register_start_handlers(bot: Bot) -> None:
         await message.answer(
             "\n".join(
                 [
-                    "Команды бота:",
-                    "- /start — начать работу и открыть маршрут регистрации/меню",
-                    "- /help — показать эту справку",
-                    "- /mod — открыть панель модератора (если есть права)",
+                    "🧭 Команды бота:",
+                    "• /start — начать работу и открыть маршрут регистрации/меню",
+                    "• /help — показать эту справку",
+                    "• /mod — открыть панель модератора (если есть права)",
                 ]
             )
         )

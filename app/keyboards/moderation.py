@@ -22,17 +22,17 @@ def get_moderation_main_keyboard() -> str:
 
     keyboard = Keyboard(inline=False)
     keyboard.add(
-        Text("Все тикеты", payload={"cmd": CMD_MOD_TICKETS, "filter": "all"}),
+        Text("📋 Все тикеты", payload={"cmd": CMD_MOD_TICKETS, "filter": "all"}),
         color=KeyboardButtonColor.PRIMARY,
     )
     keyboard.row()
     keyboard.add(
-        Text("Новые тикеты", payload={"cmd": CMD_MOD_TICKETS, "filter": "open"}),
+        Text("🆕 Новые тикеты", payload={"cmd": CMD_MOD_TICKETS, "filter": "open"}),
         color=KeyboardButtonColor.PRIMARY,
     )
     keyboard.row()
     keyboard.add(
-        Text("Тикеты в работе", payload={"cmd": CMD_MOD_TICKETS, "filter": "in_progress"}),
+        Text("🔄 Тикеты в работе", payload={"cmd": CMD_MOD_TICKETS, "filter": "in_progress"}),
         color=KeyboardButtonColor.PRIMARY,
     )
     return keyboard.get_json()
@@ -65,7 +65,7 @@ def get_moderation_tickets_keyboard(
     if current_page > 1:
         keyboard.add(
             Text(
-                "Предыдущая страница",
+                "⬅️ Предыдущая",
                 payload={
                     "cmd": CMD_MOD_TICKETS_PAGE,
                     "page": current_page - 1,
@@ -79,7 +79,7 @@ def get_moderation_tickets_keyboard(
             keyboard.row()
         keyboard.add(
             Text(
-                "Следующая страница",
+                "Следующая ➡️",
                 payload={
                     "cmd": CMD_MOD_TICKETS_PAGE,
                     "page": current_page + 1,
@@ -90,7 +90,7 @@ def get_moderation_tickets_keyboard(
         )
 
     keyboard.row()
-    keyboard.add(Text("В меню модератора", payload={"cmd": CMD_MOD_MAIN}))
+    keyboard.add(Text("🏠 В меню модератора", payload={"cmd": CMD_MOD_MAIN}))
     return keyboard.get_json()
 
 
@@ -101,18 +101,18 @@ def get_moderation_ticket_details_keyboard(ticket_id: int, status: str, filter_k
 
     if status != "closed":
         keyboard.add(
-            Text("Ответить", payload={"cmd": CMD_MOD_REPLY, "ticket_id": ticket_id}),
+            Text("✍️ Ответить", payload={"cmd": CMD_MOD_REPLY, "ticket_id": ticket_id}),
             color=KeyboardButtonColor.PRIMARY,
         )
         keyboard.row()
         keyboard.add(
-            Text("Закрыть тикет", payload={"cmd": CMD_MOD_CLOSE, "ticket_id": ticket_id}),
+            Text("🔒 Закрыть тикет", payload={"cmd": CMD_MOD_CLOSE, "ticket_id": ticket_id}),
             color=KeyboardButtonColor.NEGATIVE,
         )
         keyboard.row()
 
     keyboard.add(
-        Text("Назад к списку", payload={"cmd": CMD_MOD_TICKETS, "filter": filter_key}),
+        Text("🔙 К списку", payload={"cmd": CMD_MOD_TICKETS, "filter": filter_key}),
         color=KeyboardButtonColor.SECONDARY,
     )
     return keyboard.get_json()

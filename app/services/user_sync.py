@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import List, Optional
 
+from loguru import logger
+
 from app.database import db
 from app.services import iiko_service
 
@@ -30,7 +32,9 @@ async def sync_user_with_iiko(user) -> SyncResult:
     """
 
     phone = user.phone_number
+    logger.debug("user_sync: старт синхронизации (user_id={}, has_phone={})", user.id, bool(phone))
     if not phone:
+        logger.error("user_sync: отсутствует телефон (user_id={})", user.id)
         return SyncResult(False, "Не найден номер телефона пользователя.", [])
 
     # 1. Пытаемся получить данные клиента.
@@ -38,31 +42,39 @@ async def sync_user_with_iiko(user) -> SyncResult:
 
     # 2. Если клиента нет — создаём.
     if client_info is None:
+        logger.debug("user_sync: клиент не найден, создаём нового (user_id={})", user.id)
         customer_id, msg = await iiko_service.register_customer(user)
         if not customer_id:
+            logger.error("user_sync: ошибка создания клиента (user_id={}): {}", user.id, msg)
             return SyncResult(False, f"Не удалось зарегистрировать клиента в iiko: {msg}", [])
         client_info = {"customer_id": customer_id, "cards": []}
     else:
         customer_id = client_info.get("customer_id")
         if not customer_id:
+            logger.warning("user_sync: у клиента отсутствует customer_id, выполняем повторную регистрацию (user_id={})", user.id)
             customer_id, msg = await iiko_service.register_customer(user)
             if not customer_id:
+                logger.error("user_sync: ошибка обновления клиента (user_id={}): {}", user.id, msg)
                 return SyncResult(False, f"Не удалось обновить данные клиента в iiko: {msg}", [])
             client_info["customer_id"] = customer_id
         else:
+            logger.debug("user_sync: обновляем существующего клиента (user_id={}, customer_id={})", user.id, customer_id)
             updated_id, msg = await iiko_service.register_customer(user, customer_id=customer_id)
             if not updated_id:
+                logger.error("user_sync: ошибка обновления профиля (user_id={}): {}", user.id, msg)
                 return SyncResult(False, f"Не удалось обновить профиль в iiko: {msg}", [])
             client_info["customer_id"] = updated_id
 
     # 3. Проверяем карты.
     cards = client_info.get("cards", []) or []
     if not cards:
+        logger.debug("user_sync: карты отсутствуют, запускаем выпуск (user_id={})", user.id)
         ok, msg, card_number = await iiko_service.issue_card_for_customer(
             phone=phone,
             customer_id=client_info["customer_id"],
         )
         if not ok:
+            logger.error("user_sync: не удалось выпустить карту (user_id={}): {}", user.id, msg)
             return SyncResult(False, f"Не удалось выпустить карту: {msg}", [])
 
         # Перезапрашиваем карточки после выпуска.
@@ -77,6 +89,11 @@ async def sync_user_with_iiko(user) -> SyncResult:
     # 4. Завершаем регистрацию локально.
     await db.update_user(user.id, is_registered=True)
     card_numbers = [item.get("number", "") for item in cards if item.get("number")]
+    logger.info(
+        "user_sync: синхронизация завершена успешно (user_id={}, cards_count={})",
+        user.id,
+        len(card_numbers),
+    )
 
     return SyncResult(
         True,

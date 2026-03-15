@@ -35,6 +35,7 @@ from app.keyboards.payloads import (
     CMD_REVIEW_OK,
 )
 from app.services.user_sync import sync_user_with_iiko
+from app.services.vk_qr import send_card_qr
 from app.states.legacy import LegacyState
 from app.utils.profile import get_profile_review_text
 from app.utils.validation import (
@@ -84,15 +85,15 @@ async def _ask_next_field(message: Message, bot: Bot, missing_fields: List[str])
     await bot.state_dispenser.set(user_id, LegacyState.WAITING_FOR_FIELD, missing_fields=missing_fields)
 
     if current == "first_name":
-        await message.answer("Введите ваше имя.")
+        await message.answer("👤 Введите ваше имя.")
     elif current == "last_name":
-        await message.answer("Введите вашу фамилию.")
+        await message.answer("👥 Введите вашу фамилию.")
     elif current == "gender":
-        await message.answer("Выберите ваш пол.", keyboard=get_gender_keyboard())
+        await message.answer("⚥ Выберите ваш пол.", keyboard=get_gender_keyboard())
     elif current == "birth_date":
-        await message.answer("Введите дату рождения в формате ДД.ММ.ГГГГ.")
+        await message.answer("🎂 Введите дату рождения в формате ДД.ММ.ГГГГ.")
     elif current == "email":
-        await message.answer("Введите email.")
+        await message.answer("📧 Введите email.")
     else:
         missing_fields.pop(0)
         await _ask_next_field(message, bot, missing_fields)
@@ -107,7 +108,7 @@ async def _run_iiko_sync(message: Message, bot: Bot) -> None:
     if not user:
         await bot.state_dispenser.delete(user_id)
         logger.error("Legacy: пользователь не найден перед iiko-синхронизацией (user_id={})", user_id)
-        await message.answer("Не удалось загрузить профиль. Введите /start.")
+        await message.answer("❌ Не удалось загрузить профиль. Введите /start.")
         return
 
     result = await sync_user_with_iiko(user)
@@ -115,15 +116,44 @@ async def _run_iiko_sync(message: Message, bot: Bot) -> None:
         await bot.state_dispenser.set(user_id, LegacyState.WAITING_FOR_IIKO_REGISTRATION)
         logger.error("Legacy: ошибка iiko-синхронизации (user_id={}): {}", user_id, result.message)
         await message.answer(
-            f"Ошибка синхронизации с iiko:\n{result.message}",
+            f"❌ Ошибка синхронизации с iiko:\n{result.message}",
             keyboard=get_retry_iiko_keyboard(),
         )
         return
 
+    card_text = (
+        "\n".join(f"- {number}" for number in result.card_numbers)
+        if result.card_numbers
+        else "Карты не найдены."
+    )
+    await message.answer(
+        "\n".join(
+            [
+                "✅ Данные успешно обновлены.",
+                result.message,
+                "🪪 Ваши карты:",
+                card_text,
+            ]
+        )
+    )
+
+    sent_qr_count = 0
+    for idx, card_number in enumerate(result.card_numbers, start=1):
+        if await send_card_qr(message, card_number, title=f"QR-код карты №{idx}"):
+            sent_qr_count += 1
+
+    logger.debug(
+        "Legacy: отправка QR завершена (user_id={}, sent_qr_count={}, cards_count={})",
+        user_id,
+        sent_qr_count,
+        len(result.card_numbers),
+    )
+    if result.card_numbers and sent_qr_count == 0:
+        await message.answer("❌ Не удалось сформировать QR-код карты. Попробуйте позже.")
+
     await bot.state_dispenser.delete(user_id)
     logger.info("Legacy: iiko-синхронизация завершена успешно (user_id={})", user_id)
     updated = await db.get_user(user_id)
-    await message.answer("Данные успешно обновлены.")
     await show_main_menu(message, user_name=(updated.first_name_input if updated else None) or "Гость")
 
 
@@ -137,11 +167,11 @@ async def start_legacy_upgrade(message: Message, bot: Bot, user) -> None:
         user.is_legacy,
     )
     await message.answer(
-        "Мы обновили бота и должны актуализировать ваши данные.\n"
+        "🔄 Мы обновили бота и должны актуализировать ваши данные.\n"
         "Это займёт несколько шагов."
     )
     await message.answer(
-        "Пожалуйста, подтвердите согласие с правилами и обработкой персональных данных.",
+        "📜 Пожалуйста, подтвердите согласие с правилами и обработкой персональных данных.",
         keyboard=get_rules_keyboard(),
     )
     await bot.state_dispenser.set(int(message.from_id), LegacyState.WAITING_FOR_RULES_CONSENT)
@@ -190,7 +220,7 @@ def register_legacy_handlers(bot: Bot) -> None:
                 user_id,
                 missing,
             )
-            await message.answer("Ожидается ввод другого поля. Продолжаем актуализацию.")
+            await message.answer("⚠️ Ожидается ввод другого поля. Продолжаем актуализацию.")
             await _ask_next_field(message, bot, missing)
             return
 
@@ -205,7 +235,7 @@ def register_legacy_handlers(bot: Bot) -> None:
     async def legacy_field_text(message: Message) -> None:
         """Обрабатывает текстовый ввод недостающих полей legacy-анкеты."""
 
-        if not await confirm_text(message, "Введите значение текстом."):
+        if not await confirm_text(message, "✍️ Введите значение текстом."):
             return
 
         user_id = int(message.from_id)
@@ -255,7 +285,7 @@ def register_legacy_handlers(bot: Bot) -> None:
             logger.info("Legacy: email сохранён (user_id={})", user_id)
         else:
             logger.warning("Legacy: неизвестное поле '{}' (user_id={})", current, user_id)
-            await message.answer("Неизвестное поле актуализации, пропускаем.")
+            await message.answer("⚠️ Неизвестное поле актуализации, пропускаем.")
 
         missing.pop(0)
         await _ask_next_field(message, bot, missing)
@@ -273,7 +303,7 @@ def register_legacy_handlers(bot: Bot) -> None:
             LegacyState.WAITING_FOR_NOTIFICATIONS_CONSENT,
         )
         await message.answer(
-            "Выберите вариант согласия на уведомления:",
+            "📢 Выберите вариант согласия на уведомления:",
             keyboard=get_notifications_keyboard(),
         )
 
@@ -286,7 +316,7 @@ def register_legacy_handlers(bot: Bot) -> None:
         user_id = int(message.from_id)
         logger.info("Legacy: открыт выбор поля для редактирования (user_id={})", user_id)
         await bot.state_dispenser.set(user_id, LegacyState.WAITING_FOR_EDIT_CHOICE)
-        await message.answer("Выберите поле для редактирования:", keyboard=get_edit_choice_keyboard())
+        await message.answer("✏️ Выберите поле для редактирования:", keyboard=get_edit_choice_keyboard())
 
     @bot.on.private_message(state=LegacyState.WAITING_FOR_EDIT_CHOICE)
     async def legacy_edit_choice(message: Message) -> None:
@@ -309,7 +339,7 @@ def register_legacy_handlers(bot: Bot) -> None:
             CMD_EDIT_BIRTH_DATE,
             CMD_EDIT_EMAIL,
         }:
-            await message.answer("Не удалось определить поле редактирования.")
+            await message.answer("⚠️ Не удалось определить поле редактирования.")
             return
 
         await bot.state_dispenser.set(
@@ -320,15 +350,15 @@ def register_legacy_handlers(bot: Bot) -> None:
         logger.debug("Legacy: переход в WAITING_FOR_EDIT_FIELD (user_id={}, field={})", user_id, command)
 
         if command == CMD_EDIT_GENDER:
-            await message.answer("Выберите новый пол.", keyboard=get_gender_keyboard())
+            await message.answer("⚥ Выберите новый пол.", keyboard=get_gender_keyboard())
         elif command == CMD_EDIT_FIRST_NAME:
-            await message.answer("Введите новое имя.")
+            await message.answer("👤 Введите новое имя.")
         elif command == CMD_EDIT_LAST_NAME:
-            await message.answer("Введите новую фамилию.")
+            await message.answer("👥 Введите новую фамилию.")
         elif command == CMD_EDIT_BIRTH_DATE:
-            await message.answer("Введите новую дату рождения в формате ДД.ММ.ГГГГ.")
+            await message.answer("🎂 Введите новую дату рождения в формате ДД.ММ.ГГГГ.")
         elif command == CMD_EDIT_EMAIL:
-            await message.answer("Введите новый email.")
+            await message.answer("📧 Введите новый email.")
 
     @bot.on.private_message(
         payload_contains={"cmd": CMD_GENDER_MALE},
@@ -349,7 +379,7 @@ def register_legacy_handlers(bot: Bot) -> None:
                 int(message.from_id),
                 edit_field,
             )
-            await message.answer("Сейчас ожидается ввод другого поля.")
+            await message.answer("⚠️ Сейчас ожидается ввод другого поля.")
             return
 
         cmd = message.get_payload_json().get("cmd")
@@ -364,7 +394,7 @@ def register_legacy_handlers(bot: Bot) -> None:
     async def legacy_edit_text(message: Message) -> None:
         """Редактирует текстовые поля legacy-анкеты."""
 
-        if not await confirm_text(message, "Введите значение текстом."):
+        if not await confirm_text(message, "✍️ Введите значение текстом."):
             return
 
         state_peer = message.state_peer
@@ -399,7 +429,7 @@ def register_legacy_handlers(bot: Bot) -> None:
             await db.update_user(user_id, email=text)
         else:
             logger.warning("Legacy: неизвестное поле редактирования (user_id={}, field={})", user_id, edit_field)
-            await message.answer("Не удалось определить редактируемое поле.")
+            await message.answer("⚠️ Не удалось определить редактируемое поле.")
             return
 
         await bot.state_dispenser.set(user_id, LegacyState.WAITING_FOR_REVIEW)

@@ -57,10 +57,10 @@ async def _send_moderation_dashboard(message: Message) -> None:
     await message.answer(
         "\n".join(
             [
-                "Панель модератора:",
-                f"- Новые тикеты: {open_count}",
-                f"- Тикеты в работе: {in_progress_count}",
-                f"- Среднее время ответа: {avg_text}",
+                "🛠 Панель модератора:",
+                f"• Новые тикеты: {open_count}",
+                f"• Тикеты в работе: {in_progress_count}",
+                f"• Среднее время ответа: {avg_text}",
             ]
         ),
         keyboard=get_moderation_main_keyboard(),
@@ -79,7 +79,7 @@ def register_moderation_handlers(bot: Bot) -> None:
         logger.debug("Запрос открытия панели модератора (user_id={})", user_id)
         if not await is_moderator(user_id):
             logger.warning("Отказ в доступе к панели модератора (user_id={})", user_id)
-            await message.answer("У вас нет прав модератора.")
+            await message.answer("⛔ У вас нет прав модератора.")
             return
 
         await bot.state_dispenser.delete(user_id)
@@ -92,7 +92,7 @@ def register_moderation_handlers(bot: Bot) -> None:
 
         user_id = int(message.from_id)
         if not await is_moderator(user_id):
-            await message.answer("У вас нет прав модератора.")
+            await message.answer("⛔ У вас нет прав модератора.")
             return
 
         payload = extract_payload(message)
@@ -112,7 +112,7 @@ def register_moderation_handlers(bot: Bot) -> None:
         )
         if not tickets:
             await message.answer(
-                f"{FILTER_TITLES.get(filter_key, 'Тикеты')} отсутствуют.",
+                f"📭 {FILTER_TITLES.get(filter_key, 'Тикеты')} отсутствуют.",
                 keyboard=get_moderation_main_keyboard(),
             )
             return
@@ -136,7 +136,7 @@ def register_moderation_handlers(bot: Bot) -> None:
 
         user_id = int(message.from_id)
         if not await is_moderator(user_id):
-            await message.answer("У вас нет прав модератора.")
+            await message.answer("⛔ У вас нет прав модератора.")
             return
 
         payload = extract_payload(message)
@@ -157,7 +157,7 @@ def register_moderation_handlers(bot: Bot) -> None:
         )
         if not tickets:
             await message.answer(
-                "На этой странице тикеты отсутствуют.",
+                "📭 На этой странице тикеты отсутствуют.",
                 keyboard=get_moderation_main_keyboard(),
             )
             return
@@ -181,7 +181,7 @@ def register_moderation_handlers(bot: Bot) -> None:
 
         user_id = int(message.from_id)
         if not await is_moderator(user_id):
-            await message.answer("У вас нет прав модератора.")
+            await message.answer("⛔ У вас нет прав модератора.")
             return
 
         payload = extract_payload(message)
@@ -196,7 +196,7 @@ def register_moderation_handlers(bot: Bot) -> None:
 
         ticket = await ticket_service.get_ticket(ticket_id)
         if not ticket:
-            await message.answer("Тикет не найден.")
+            await message.answer("❌ Тикет не найден.")
             return
 
         history = await ticket_service.get_ticket_messages(ticket_id)
@@ -217,7 +217,7 @@ def register_moderation_handlers(bot: Bot) -> None:
 
         user_id = int(message.from_id)
         if not await is_moderator(user_id):
-            await message.answer("У вас нет прав модератора.")
+            await message.answer("⛔ У вас нет прав модератора.")
             return
 
         payload = extract_payload(message)
@@ -225,10 +225,10 @@ def register_moderation_handlers(bot: Bot) -> None:
         logger.info("Модератор начал ввод ответа (moderator_id={}, ticket_id={})", user_id, ticket_id)
         ticket = await ticket_service.get_ticket(ticket_id)
         if not ticket:
-            await message.answer("Тикет не найден.")
+            await message.answer("❌ Тикет не найден.")
             return
         if ticket.status == "closed":
-            await message.answer("Тикет уже закрыт. Ответ невозможен.")
+            await message.answer("🔒 Тикет уже закрыт. Ответ невозможен.")
             return
 
         await bot.state_dispenser.set(
@@ -237,7 +237,7 @@ def register_moderation_handlers(bot: Bot) -> None:
             ticket_id=ticket_id,
         )
         logger.debug("Переход в WAITING_FOR_MODERATOR_REPLY (moderator_id={}, ticket_id={})", user_id, ticket_id)
-        await message.answer(f"Введите ответ пользователю по тикету #{ticket_id}.")
+        await message.answer(f"✍️ Введите ответ пользователю по тикету #{ticket_id}.")
 
     @bot.on.private_message(state=TicketState.WAITING_FOR_MODERATOR_REPLY)
     async def moderation_reply_send(message: Message) -> None:
@@ -246,15 +246,15 @@ def register_moderation_handlers(bot: Bot) -> None:
         user_id = int(message.from_id)
         if not await is_moderator(user_id):
             await bot.state_dispenser.delete(user_id)
-            await message.answer("У вас нет прав модератора.")
+            await message.answer("⛔ У вас нет прав модератора.")
             return
-        if not await confirm_text(message, "Пожалуйста, отправьте ответ текстом."):
+        if not await confirm_text(message, "✍️ Пожалуйста, отправьте ответ текстом."):
             return
 
         state_peer = message.state_peer
         if state_peer is None:
             await bot.state_dispenser.delete(user_id)
-            await message.answer("Состояние ответа потеряно. Откройте тикет заново.")
+            await message.answer("⚠️ Состояние ответа потеряно. Откройте тикет заново.")
             return
 
         ticket_id = int(state_peer.payload.get("ticket_id", 0))
@@ -262,7 +262,7 @@ def register_moderation_handlers(bot: Bot) -> None:
         ticket = await ticket_service.get_ticket(ticket_id)
         if not ticket:
             await bot.state_dispenser.delete(user_id)
-            await message.answer("Тикет не найден.")
+            await message.answer("❌ Тикет не найден.")
             return
 
         reply_text = message.text.strip()
@@ -281,7 +281,7 @@ def register_moderation_handlers(bot: Bot) -> None:
                 peer_ids=[ticket.user_id],
                 message="\n".join(
                     [
-                        f"Ответ модератора по тикету #{ticket_id}:",
+                        f"💬 Ответ модератора по тикету #{ticket_id}:",
                         reply_text,
                     ]
                 ),
@@ -310,7 +310,7 @@ def register_moderation_handlers(bot: Bot) -> None:
 
         user_id = int(message.from_id)
         if not await is_moderator(user_id):
-            await message.answer("У вас нет прав модератора.")
+            await message.answer("⛔ У вас нет прав модератора.")
             return
 
         payload = extract_payload(message)
@@ -320,7 +320,7 @@ def register_moderation_handlers(bot: Bot) -> None:
         ok = await ticket_service.close_ticket(ticket_id)
         if not ok:
             logger.warning("Не удалось закрыть тикет: не найден (ticket_id={})", ticket_id)
-            await message.answer("Не удалось закрыть тикет: запись не найдена.")
+            await message.answer("❌ Не удалось закрыть тикет: запись не найдена.")
             return
 
         logger.info("Тикет закрыт модератором (moderator_id={}, ticket_id={})", user_id, ticket_id)

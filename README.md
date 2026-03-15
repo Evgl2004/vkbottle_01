@@ -48,6 +48,7 @@
 
 - [REFERENCE_ANALYSIS.md](C:/Users/admin_eas/PycharmProjects/vkbottle/docs/REFERENCE_ANALYSIS.md)
 - [VK_PORTING_PLAN.md](C:/Users/admin_eas/PycharmProjects/vkbottle/docs/VK_PORTING_PLAN.md)
+- [VK_PORTING_AUDIT.md](C:/Users/admin_eas/PycharmProjects/vkbottle/docs/VK_PORTING_AUDIT.md)
 
 Эти документы описывают:
 
@@ -56,6 +57,7 @@
 3. Модель хранения данных.
 4. Риски и технические различия между Telegram и VK.
 5. Поэтапный план миграции.
+6. Формальную сверку полноты переноса на текущем этапе.
 
 ## 5. Быстрый запуск (локально)
 
@@ -72,6 +74,10 @@ cp .env.example .env
 - `VK_BOT_TOKEN`
 - `POSTGRES_PASSWORD`
 - `ADMIN_USER_IDS` (опционально, но желательно для модерации/админ-доступа)
+
+Для расширенного тестового логирования рекомендуем:
+
+- `LOG_LEVEL=DEBUG`
 
 ### 5.2 Запуск через Docker
 

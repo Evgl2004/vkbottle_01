@@ -42,7 +42,7 @@ def get_user_tickets_list_keyboard(
     if current_page > 1:
         keyboard.add(
             Text(
-                "Предыдущая страница",
+                "⬅️ Предыдущая",
                 payload={"cmd": CMD_USER_TICKETS_PAGE, "page": current_page - 1},
             ),
             color=KeyboardButtonColor.PRIMARY,
@@ -52,14 +52,14 @@ def get_user_tickets_list_keyboard(
             keyboard.row()
         keyboard.add(
             Text(
-                "Следующая страница",
+                "Следующая ➡️",
                 payload={"cmd": CMD_USER_TICKETS_PAGE, "page": current_page + 1},
             ),
             color=KeyboardButtonColor.PRIMARY,
         )
 
     keyboard.row()
-    keyboard.add(Text("Назад в отдел заботы", payload={"cmd": CMD_BACK_TO_SUPPORT}))
+    keyboard.add(Text("🔙 В отдел заботы", payload={"cmd": CMD_BACK_TO_SUPPORT}))
 
     return keyboard.get_json()
 
@@ -70,12 +70,12 @@ def get_user_ticket_details_keyboard(ticket_id: int, status: str) -> str:
     keyboard = Keyboard(inline=False)
     if status != "closed":
         keyboard.add(
-            Text("Ответить", payload={"cmd": CMD_USER_REPLY, "ticket_id": ticket_id}),
+            Text("✍️ Ответить", payload={"cmd": CMD_USER_REPLY, "ticket_id": ticket_id}),
             color=KeyboardButtonColor.PRIMARY,
         )
         keyboard.row()
     keyboard.add(
-        Text("К списку обращений", payload={"cmd": CMD_MY_TICKETS}),
+        Text("📋 К списку обращений", payload={"cmd": CMD_MY_TICKETS}),
         color=KeyboardButtonColor.SECONDARY,
     )
     return keyboard.get_json()

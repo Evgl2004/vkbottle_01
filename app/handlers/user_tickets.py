@@ -53,7 +53,7 @@ def register_user_ticket_handlers(bot: Bot) -> None:
     async def create_ticket_from_question(message: Message) -> None:
         """Создает новый тикет на основе сообщения пользователя."""
 
-        if not await confirm_text(message, "Пожалуйста, отправьте вопрос текстом."):
+        if not await confirm_text(message, "✍️ Пожалуйста, отправьте вопрос текстом."):
             return
 
         user_id = int(message.from_id)
@@ -62,7 +62,7 @@ def register_user_ticket_handlers(bot: Bot) -> None:
         if not user:
             await bot.state_dispenser.delete(user_id)
             logger.error("Невозможно создать тикет: пользователь не найден (user_id={})", user_id)
-            await message.answer("Пользователь не найден. Введите /start для повторной инициализации.")
+            await message.answer("❌ Пользователь не найден. Введите /start для повторной инициализации.")
             return
 
         ticket = await ticket_service.create_ticket(
@@ -76,9 +76,9 @@ def register_user_ticket_handlers(bot: Bot) -> None:
         await message.answer(
             "\n".join(
                 [
-                    "Ваше обращение принято.",
-                    f"Номер тикета: #{ticket.id}",
-                    "Модератор ответит в ближайшее время.",
+                    "✅ Ваше обращение принято.",
+                    f"🎫 Номер тикета: #{ticket.id}",
+                    "🕐 Модератор ответит в ближайшее время.",
                 ]
             ),
             keyboard=get_back_to_main_keyboard(),
@@ -88,10 +88,10 @@ def register_user_ticket_handlers(bot: Bot) -> None:
             message,
             "\n".join(
                 [
-                    "Новое обращение пользователя.",
-                    f"Тикет: #{ticket.id}",
-                    f"Пользователь: {user.username or user.first_name_input or user_id}",
-                    f"Текст: {message.text.strip()}",
+                    "📬 Новое обращение пользователя.",
+                    f"🎫 Тикет: #{ticket.id}",
+                    f"👤 Пользователь: {user.username or user.first_name_input or user_id}",
+                    f"❓ Текст: {message.text.strip()}",
                 ]
             ),
         )
@@ -112,7 +112,7 @@ def register_user_ticket_handlers(bot: Bot) -> None:
         )
         if not tickets:
             await message.answer(
-                "У вас пока нет обращений. Создать обращение можно через раздел «Отдел заботы».",
+                "📭 У вас пока нет обращений. Создать обращение можно через раздел «Отдел заботы».",
                 keyboard=get_back_to_support_keyboard(),
             )
             return
@@ -125,7 +125,7 @@ def register_user_ticket_handlers(bot: Bot) -> None:
             total_pages,
         )
         await message.answer(
-            f"Ваши обращения (страница 1/{total_pages}):",
+            f"📋 Ваши обращения (страница 1/{total_pages}):",
             keyboard=get_user_tickets_list_keyboard(tickets, 1, total_pages),
         )
 
@@ -145,7 +145,7 @@ def register_user_ticket_handlers(bot: Bot) -> None:
         )
         if not tickets:
             await message.answer(
-                "На этой странице обращений нет.",
+                "📭 На этой странице обращений нет.",
                 keyboard=get_back_to_support_keyboard(),
             )
             return
@@ -159,7 +159,7 @@ def register_user_ticket_handlers(bot: Bot) -> None:
             total_count,
         )
         await message.answer(
-            f"Ваши обращения (страница {page}/{total_pages}):",
+            f"📋 Ваши обращения (страница {page}/{total_pages}):",
             keyboard=get_user_tickets_list_keyboard(tickets, page, total_pages),
         )
 
@@ -173,7 +173,7 @@ def register_user_ticket_handlers(bot: Bot) -> None:
 
         ticket = await ticket_service.get_ticket(ticket_id)
         if not ticket or ticket.user_id != int(message.from_id):
-            await message.answer("Тикет не найден или доступ запрещён.")
+            await message.answer("❌ Тикет не найден или доступ запрещён.")
             return
 
         history = await ticket_service.get_ticket_messages(ticket_id)
@@ -198,10 +198,10 @@ def register_user_ticket_handlers(bot: Bot) -> None:
 
         ticket = await ticket_service.get_ticket(ticket_id)
         if not ticket or ticket.user_id != int(message.from_id):
-            await message.answer("Тикет не найден или доступ запрещён.")
+            await message.answer("❌ Тикет не найден или доступ запрещён.")
             return
         if ticket.status == "closed":
-            await message.answer("Тикет уже закрыт. Отправка нового ответа невозможна.")
+            await message.answer("🔒 Тикет уже закрыт. Отправка нового ответа невозможна.")
             return
 
         await bot.state_dispenser.set(
@@ -211,7 +211,7 @@ def register_user_ticket_handlers(bot: Bot) -> None:
         )
         logger.debug("Переход в WAITING_FOR_USER_REPLY (user_id={}, ticket_id={})", int(message.from_id), ticket_id)
         await message.answer(
-            f"Введите ответ для тикета #{ticket_id}.",
+            f"✍️ Введите ответ для тикета #{ticket_id}.",
             keyboard=get_user_ticket_details_keyboard(ticket_id, ticket.status),
         )
 
@@ -219,13 +219,13 @@ def register_user_ticket_handlers(bot: Bot) -> None:
     async def user_reply_send(message: Message) -> None:
         """Сохраняет ответ пользователя и уведомляет модераторов."""
 
-        if not await confirm_text(message, "Пожалуйста, отправьте ответ текстом."):
+        if not await confirm_text(message, "✍️ Пожалуйста, отправьте ответ текстом."):
             return
 
         state_peer = message.state_peer
         if state_peer is None:
             await bot.state_dispenser.delete(int(message.from_id))
-            await message.answer("Состояние ответа потеряно. Откройте тикет заново.")
+            await message.answer("⚠️ Состояние ответа потеряно. Откройте тикет заново.")
             return
 
         ticket_id = int(state_peer.payload.get("ticket_id", 0))
@@ -233,7 +233,7 @@ def register_user_ticket_handlers(bot: Bot) -> None:
         ticket = await ticket_service.get_ticket(ticket_id)
         if not ticket or ticket.user_id != int(message.from_id):
             await bot.state_dispenser.delete(int(message.from_id))
-            await message.answer("Тикет не найден или доступ запрещён.")
+            await message.answer("❌ Тикет не найден или доступ запрещён.")
             return
 
         text = message.text.strip()
@@ -253,8 +253,8 @@ def register_user_ticket_handlers(bot: Bot) -> None:
             message,
             "\n".join(
                 [
-                    "Новое сообщение от пользователя в тикете.",
-                    f"Тикет: #{ticket_id}",
+                    "💬 Новое сообщение от пользователя в тикете.",
+                    f"🎫 Тикет: #{ticket_id}",
                     f"Текст: {text}",
                 ]
             ),

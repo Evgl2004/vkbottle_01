@@ -88,7 +88,7 @@ async def _run_iiko_sync(message: Message, bot: Bot) -> None:
     user = await db.get_user(user_id)
     if not user:
         await bot.state_dispenser.delete(user_id)
-        await message.answer("Не удалось загрузить профиль пользователя. Введите /start.")
+        await message.answer("❌ Не удалось загрузить профиль пользователя. Введите /start.")
         return
 
     result = await sync_user_with_iiko(user)
@@ -101,7 +101,7 @@ async def _run_iiko_sync(message: Message, bot: Bot) -> None:
         await bot.state_dispenser.set(user_id, RegistrationState.WAITING_FOR_IIKO_REGISTRATION)
         logger.debug("Переход в WAITING_FOR_IIKO_REGISTRATION после ошибки (user_id={})", user_id)
         await message.answer(
-            f"Ошибка синхронизации с iiko:\n{result.message}",
+            f"❌ Ошибка синхронизации с iiko:\n{result.message}",
             keyboard=get_retry_iiko_keyboard(),
         )
         return
@@ -120,9 +120,9 @@ async def _run_iiko_sync(message: Message, bot: Bot) -> None:
     await message.answer(
         "\n".join(
             [
-                "Регистрация успешно завершена.",
+                "✅ Регистрация успешно завершена.",
                 result.message,
-                "Ваши карты:",
+                "🪪 Ваши карты:",
                 card_text,
             ]
         )
@@ -141,7 +141,7 @@ async def _run_iiko_sync(message: Message, bot: Bot) -> None:
     )
     if result.card_numbers and sent_qr_count == 0:
         await message.answer(
-            "Не удалось сформировать QR-код карты. Попробуйте открыть раздел «Виртуальная карта» чуть позже."
+            "❌ Не удалось сформировать QR-код карты. Попробуйте открыть раздел «Виртуальная карта» чуть позже."
         )
 
     await bot.state_dispenser.delete(user_id)
@@ -171,7 +171,7 @@ def register_registration_handlers(bot: Bot) -> None:
         await bot.state_dispenser.set(user_id, RegistrationState.WAITING_FOR_CONTACT)
         logger.debug("Переход в WAITING_FOR_CONTACT (user_id={})", user_id)
         await message.answer(
-            "Спасибо. Теперь введите номер телефона в формате +79991234567."
+            "✅ Спасибо! Теперь введите номер телефона в формате +79991234567."
         )
 
     @bot.on.private_message(
@@ -193,7 +193,7 @@ def register_registration_handlers(bot: Bot) -> None:
         await db.update_user(user_id, gender=gender)
         await bot.state_dispenser.set(user_id, RegistrationState.WAITING_FOR_BIRTH_DATE)
         logger.debug("Переход в WAITING_FOR_BIRTH_DATE (user_id={})", user_id)
-        await message.answer("Введите дату рождения в формате ДД.ММ.ГГГГ.")
+        await message.answer("🎂 Введите дату рождения в формате ДД.ММ.ГГГГ.")
 
     @bot.on.private_message(state=RegistrationState.WAITING_FOR_CONTACT)
     async def process_contact(message: Message) -> None:
@@ -203,7 +203,7 @@ def register_registration_handlers(bot: Bot) -> None:
         поэтому на этом шаге используется ручной ввод номера.
         """
 
-        if not await confirm_text(message, "Введите номер телефона текстом (пример: +79991234567)."):
+        if not await confirm_text(message, "📱 Введите номер телефона текстом (пример: +79991234567)."):
             return
 
         user_id = int(message.from_id)
@@ -224,13 +224,13 @@ def register_registration_handlers(bot: Bot) -> None:
         )
         await bot.state_dispenser.set(user_id, RegistrationState.WAITING_FOR_FIRST_NAME)
         logger.debug("Переход в WAITING_FOR_FIRST_NAME (user_id={})", user_id)
-        await message.answer("Телефон сохранён. Теперь введите ваше имя.")
+        await message.answer("✅ Телефон сохранён. Теперь введите ваше имя.")
 
     @bot.on.private_message(state=RegistrationState.WAITING_FOR_FIRST_NAME)
     async def process_first_name(message: Message) -> None:
         """Проверяет и сохраняет имя пользователя."""
 
-        if not await confirm_text(message, "Введите имя текстом."):
+        if not await confirm_text(message, "👤 Введите имя текстом."):
             return
 
         user_id = int(message.from_id)
@@ -247,13 +247,13 @@ def register_registration_handlers(bot: Bot) -> None:
         logger.info("Имя сохранено (user_id={}, value='{}')", user_id, cleaned)
         await bot.state_dispenser.set(user_id, RegistrationState.WAITING_FOR_LAST_NAME)
         logger.debug("Переход в WAITING_FOR_LAST_NAME (user_id={})", user_id)
-        await message.answer("Имя сохранено. Теперь введите фамилию.")
+        await message.answer("✅ Имя сохранено. Теперь введите фамилию.")
 
     @bot.on.private_message(state=RegistrationState.WAITING_FOR_LAST_NAME)
     async def process_last_name(message: Message) -> None:
         """Проверяет и сохраняет фамилию пользователя."""
 
-        if not await confirm_text(message, "Введите фамилию текстом."):
+        if not await confirm_text(message, "👥 Введите фамилию текстом."):
             return
 
         user_id = int(message.from_id)
@@ -270,13 +270,13 @@ def register_registration_handlers(bot: Bot) -> None:
         logger.info("Фамилия сохранена (user_id={}, value='{}')", user_id, cleaned)
         await bot.state_dispenser.set(user_id, RegistrationState.WAITING_FOR_GENDER)
         logger.debug("Переход в WAITING_FOR_GENDER (user_id={})", user_id)
-        await message.answer("Фамилия сохранена. Выберите пол.", keyboard=get_gender_keyboard())
+        await message.answer("✅ Фамилия сохранена. Выберите пол.", keyboard=get_gender_keyboard())
 
     @bot.on.private_message(state=RegistrationState.WAITING_FOR_BIRTH_DATE)
     async def process_birth_date(message: Message) -> None:
         """Проверяет дату рождения и запрашивает email."""
 
-        if not await confirm_text(message, "Введите дату рождения текстом в формате ДД.ММ.ГГГГ."):
+        if not await confirm_text(message, "🎂 Введите дату рождения текстом в формате ДД.ММ.ГГГГ."):
             return
 
         user_id = int(message.from_id)
@@ -293,13 +293,13 @@ def register_registration_handlers(bot: Bot) -> None:
         logger.info("Дата рождения сохранена (user_id={}, birth_date={})", user_id, birth_date)
         await bot.state_dispenser.set(user_id, RegistrationState.WAITING_FOR_EMAIL)
         logger.debug("Переход в WAITING_FOR_EMAIL (user_id={})", user_id)
-        await message.answer("Дата рождения сохранена. Теперь введите email.")
+        await message.answer("✅ Дата рождения сохранена. Теперь введите email.")
 
     @bot.on.private_message(state=RegistrationState.WAITING_FOR_EMAIL)
     async def process_email(message: Message) -> None:
         """Проверяет email и переводит пользователя на экран ревью."""
 
-        if not await confirm_text(message, "Введите email текстом."):
+        if not await confirm_text(message, "📧 Введите email текстом."):
             return
 
         user_id = int(message.from_id)
@@ -331,7 +331,7 @@ def register_registration_handlers(bot: Bot) -> None:
         )
         logger.debug("Переход в WAITING_FOR_NOTIFICATIONS_CONSENT (user_id={})", user_id)
         await message.answer(
-            "Ознакомьтесь с условиями уведомлений и выберите вариант:",
+            "📢 Ознакомьтесь с условиями уведомлений и выберите вариант:",
             keyboard=get_notifications_keyboard(),
         )
 
@@ -345,7 +345,7 @@ def register_registration_handlers(bot: Bot) -> None:
         logger.info("Пользователь открыл редактирование анкеты (user_id={})", user_id)
         await bot.state_dispenser.set(user_id, RegistrationState.WAITING_FOR_EDIT_CHOICE)
         logger.debug("Переход в WAITING_FOR_EDIT_CHOICE (user_id={})", user_id)
-        await message.answer("Выберите поле для редактирования:", keyboard=get_edit_choice_keyboard())
+        await message.answer("✏️ Выберите поле для редактирования:", keyboard=get_edit_choice_keyboard())
 
     @bot.on.private_message(state=RegistrationState.WAITING_FOR_EDIT_CHOICE)
     async def process_edit_choice(message: Message) -> None:
@@ -365,36 +365,36 @@ def register_registration_handlers(bot: Bot) -> None:
         if command == CMD_EDIT_FIRST_NAME:
             await bot.state_dispenser.set(user_id, RegistrationState.WAITING_FOR_EDIT_FIRST_NAME)
             logger.debug("Переход в WAITING_FOR_EDIT_FIRST_NAME (user_id={})", user_id)
-            await message.answer("Введите новое имя.")
+            await message.answer("👤 Введите новое имя.")
             return
         if command == CMD_EDIT_LAST_NAME:
             await bot.state_dispenser.set(user_id, RegistrationState.WAITING_FOR_EDIT_LAST_NAME)
             logger.debug("Переход в WAITING_FOR_EDIT_LAST_NAME (user_id={})", user_id)
-            await message.answer("Введите новую фамилию.")
+            await message.answer("👥 Введите новую фамилию.")
             return
         if command == CMD_EDIT_GENDER:
             await bot.state_dispenser.set(user_id, RegistrationState.WAITING_FOR_EDIT_GENDER)
             logger.debug("Переход в WAITING_FOR_EDIT_GENDER (user_id={})", user_id)
-            await message.answer("Выберите пол.", keyboard=get_gender_keyboard())
+            await message.answer("⚥ Выберите пол.", keyboard=get_gender_keyboard())
             return
         if command == CMD_EDIT_BIRTH_DATE:
             await bot.state_dispenser.set(user_id, RegistrationState.WAITING_FOR_EDIT_BIRTH_DATE)
             logger.debug("Переход в WAITING_FOR_EDIT_BIRTH_DATE (user_id={})", user_id)
-            await message.answer("Введите новую дату рождения в формате ДД.ММ.ГГГГ.")
+            await message.answer("🎂 Введите новую дату рождения в формате ДД.ММ.ГГГГ.")
             return
         if command == CMD_EDIT_EMAIL:
             await bot.state_dispenser.set(user_id, RegistrationState.WAITING_FOR_EDIT_EMAIL)
             logger.debug("Переход в WAITING_FOR_EDIT_EMAIL (user_id={})", user_id)
-            await message.answer("Введите новый email.")
+            await message.answer("📧 Введите новый email.")
             return
 
-        await message.answer("Не удалось определить выбранное поле. Выберите действие снова.")
+        await message.answer("⚠️ Не удалось определить выбранное поле. Выберите действие снова.")
 
     @bot.on.private_message(state=RegistrationState.WAITING_FOR_EDIT_FIRST_NAME)
     async def edit_first_name(message: Message) -> None:
         """Редактирует поле имени."""
         user_id = int(message.from_id)
-        if not await confirm_text(message, "Введите имя текстом."):
+        if not await confirm_text(message, "👤 Введите имя текстом."):
             return
         valid, error = await validate_first_name(message.text.strip())
         if not valid:
@@ -411,7 +411,7 @@ def register_registration_handlers(bot: Bot) -> None:
     async def edit_last_name(message: Message) -> None:
         """Редактирует поле фамилии."""
         user_id = int(message.from_id)
-        if not await confirm_text(message, "Введите фамилию текстом."):
+        if not await confirm_text(message, "👥 Введите фамилию текстом."):
             return
         valid, error = await validate_last_name(message.text.strip())
         if not valid:
@@ -448,7 +448,7 @@ def register_registration_handlers(bot: Bot) -> None:
     async def edit_birth_date(message: Message) -> None:
         """Редактирует поле даты рождения."""
         user_id = int(message.from_id)
-        if not await confirm_text(message, "Введите дату рождения текстом."):
+        if not await confirm_text(message, "🎂 Введите дату рождения текстом."):
             return
         text = message.text.strip()
         valid, error = await validate_birth_date(text)
@@ -466,7 +466,7 @@ def register_registration_handlers(bot: Bot) -> None:
     async def edit_email(message: Message) -> None:
         """Редактирует поле email."""
         user_id = int(message.from_id)
-        if not await confirm_text(message, "Введите email текстом."):
+        if not await confirm_text(message, "📧 Введите email текстом."):
             return
         text = message.text.strip()
         valid, error = await validate_email(text)

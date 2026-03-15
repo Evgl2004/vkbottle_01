@@ -43,7 +43,8 @@ async def show_main_menu(message: Message, user_name: str = "Гость") -> Non
 
     logger.debug("Показ главного меню (user_id={}, user_name='{}')", int(message.from_id), user_name)
     await message.answer(
-        f"Здравствуйте, {user_name}.\nВы находитесь в главном меню. Выберите раздел:",
+        f"👋 Здравствуйте, {user_name}!\n"
+        "Вы в главном меню. Выберите раздел:",
         keyboard=get_main_menu_keyboard(),
     )
 
@@ -55,7 +56,7 @@ async def show_support_menu(message: Message) -> None:
     count = await ticket_service.get_user_tickets_count(user_id)
     logger.debug("Показ меню поддержки (user_id={}, tickets_count={})", user_id, count)
     await message.answer(
-        "Раздел «Отдел заботы».\nВыберите действие:",
+        "🆘 Раздел «Отдел заботы».\nВыберите действие:",
         keyboard=get_support_keyboard(has_tickets=count > 0),
     )
 
@@ -74,7 +75,7 @@ def register_menu_handlers(bot: Bot) -> None:
         user = await db.get_user(user_id)
         if not user:
             logger.warning("Невозможно открыть меню: профиль не найден (user_id={})", user_id)
-            await message.answer("Профиль не найден. Введите /start для повторной инициализации.")
+            await message.answer("❌ Профиль не найден. Введите /start для повторной инициализации.")
             return
 
         if user.is_legacy or not user.rules_accepted or not user.is_registered:
@@ -86,7 +87,7 @@ def register_menu_handlers(bot: Bot) -> None:
                 user.is_registered,
             )
             await message.answer(
-                "Чтобы открыть главное меню, сначала завершите регистрацию через /start."
+                "⚠️ Чтобы открыть главное меню, сначала завершите регистрацию через /start."
             )
             return
 
@@ -105,7 +106,7 @@ def register_menu_handlers(bot: Bot) -> None:
         if not user or user.is_legacy or not user.rules_accepted or not user.is_registered:
             logger.info("Отказ в открытии поддержки: регистрация не завершена (user_id={})", user_id)
             await message.answer(
-                "Раздел поддержки доступен после завершения регистрации. Введите /start."
+                "⚠️ Раздел поддержки доступен после завершения регистрации. Введите /start."
             )
             return
 
@@ -124,7 +125,7 @@ def register_menu_handlers(bot: Bot) -> None:
                 user_id,
             )
             await message.answer(
-                "Номер телефона не найден. Пожалуйста, пройдите регистрацию заново через команду /start.",
+                "❌ Номер телефона не найден. Пожалуйста, пройдите регистрацию заново через команду /start.",
                 keyboard=get_back_to_main_keyboard(),
             )
             return
@@ -134,7 +135,7 @@ def register_menu_handlers(bot: Bot) -> None:
         if not info:
             logger.error("Не удалось получить бонусный баланс из iiko (user_id={})", user_id)
             await message.answer(
-                "Не удалось получить баланс бонусов. Попробуйте позже.",
+                "❌ Не удалось получить баланс бонусов. Попробуйте позже.",
                 keyboard=get_back_to_main_keyboard(),
             )
             return
@@ -144,9 +145,9 @@ def register_menu_handlers(bot: Bot) -> None:
         await message.answer(
             "\n".join(
                 [
-                    "Ваш бонусный баланс:",
-                    f"- Доступно бонусов: {balance}",
-                    f"- Программа: {info.get('program_name') or 'не указана'}",
+                    "💰 Ваш бонусный баланс:",
+                    f"• Доступно бонусов: {balance}",
+                    f"• Программа: {info.get('program_name') or 'не указана'}",
                 ]
             ),
             keyboard=get_back_to_main_keyboard(),
@@ -174,7 +175,7 @@ def register_menu_handlers(bot: Bot) -> None:
                 user_id,
             )
             await message.answer(
-                "Телефон пользователя не найден. Пройдите регистрацию через /start.",
+                "❌ Телефон пользователя не найден. Пройдите регистрацию через /start.",
                 keyboard=get_back_to_main_keyboard(),
             )
             return
@@ -193,7 +194,7 @@ def register_menu_handlers(bot: Bot) -> None:
                     msg,
                 )
                 await message.answer(
-                    f"Не удалось зарегистрировать клиента в iiko.\nПричина: {msg}",
+                    f"❌ Не удалось зарегистрировать клиента в iiko.\nПричина: {msg}",
                     keyboard=get_back_to_main_keyboard(),
                 )
                 return
@@ -219,7 +220,7 @@ def register_menu_handlers(bot: Bot) -> None:
                     msg,
                 )
                 await message.answer(
-                    f"Не удалось выпустить карту.\nПричина: {msg}",
+                    f"❌ Не удалось выпустить карту.\nПричина: {msg}",
                     keyboard=get_back_to_main_keyboard(),
                 )
                 return
@@ -233,14 +234,14 @@ def register_menu_handlers(bot: Bot) -> None:
         if not cards:
             logger.warning("После выпуска карта не найдена (user_id={})", user_id)
             await message.answer(
-                "Карты не найдены. Обратитесь к администратору.",
+                "⚠️ Карты не найдены. Обратитесь к администратору.",
                 keyboard=get_back_to_main_keyboard(),
             )
             return
 
         card_lines = [f"- {card.get('number', 'неизвестный номер')}" for card in cards]
         await message.answer(
-            "Ваши виртуальные карты:\n" + "\n".join(card_lines),
+            "🪪 Ваши виртуальные карты:\n" + "\n".join(card_lines),
             keyboard=get_back_to_main_keyboard(),
         )
 
@@ -266,7 +267,7 @@ def register_menu_handlers(bot: Bot) -> None:
         )
         if sent_qr_count == 0:
             await message.answer(
-                "Не удалось сформировать QR-код карты. Попробуйте позже или обратитесь в поддержку.",
+                "❌ Не удалось сформировать QR-код карты. Попробуйте позже или обратитесь в поддержку.",
                 keyboard=get_back_to_main_keyboard(),
             )
 
@@ -278,9 +279,9 @@ def register_menu_handlers(bot: Bot) -> None:
         await message.answer(
             "\n".join(
                 [
-                    "Вакансии:",
+                    "💼 Вакансии:",
                     "Мы ищем ответственных и энергичных сотрудников.",
-                    "Подробности по ссылке: https://team.sobolevalliance.su/vacancy",
+                    "Подробности: https://team.sobolevalliance.su/vacancy",
                 ]
             ),
             keyboard=get_back_to_main_keyboard(),
@@ -292,7 +293,7 @@ def register_menu_handlers(bot: Bot) -> None:
 
         logger.debug("Открыт раздел обратной связи (user_id={})", int(message.from_id))
         await message.answer(
-            "Оставить отзыв можно по кнопке ниже.",
+            "✍️ Оставить отзыв можно по кнопке ниже.",
             keyboard=get_feedback_link_keyboard(),
         )
 
@@ -304,10 +305,10 @@ def register_menu_handlers(bot: Bot) -> None:
         await message.answer(
             "\n".join(
                 [
-                    "Контакты:",
-                    "Почта: info@sobolev.rest",
-                    "Сайт: https://sobolevalliance.su",
-                    "Соцсети: @sobolevalliance",
+                    "📇 Контакты:",
+                    "• Почта: info@sobolev.rest",
+                    "• Сайт: https://sobolevalliance.su",
+                    "• Соцсети: @sobolevalliance",
                 ]
             ),
             keyboard=get_back_to_support_keyboard(),
@@ -321,7 +322,7 @@ def register_menu_handlers(bot: Bot) -> None:
         logger.info("Переход в режим создания тикета (user_id={})", user_id)
         await bot.state_dispenser.set(user_id, TicketState.WAITING_FOR_QUESTION)
         await message.answer(
-            "Опишите ваш вопрос одним сообщением.\n"
+            "❓ Опишите ваш вопрос одним сообщением.\n"
             "Модератор увидит обращение и ответит в ближайшее время.",
             keyboard=get_back_to_support_keyboard(),
         )

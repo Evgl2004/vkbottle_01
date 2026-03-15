@@ -23,7 +23,7 @@ BIRTH_DATE_PATTERN = re.compile(r"^\d{2}\.\d{2}\.\d{4}$")
 
 async def confirm_text(
     message: Message,
-    error_text: str = "Пожалуйста, отправьте текстовое сообщение.",
+    error_text: str = "✍️ Пожалуйста, отправьте текстовое сообщение.",
 ) -> bool:
     """Проверяет, что входящее сообщение содержит текст.
 
@@ -48,11 +48,11 @@ async def validate_phone(value: str) -> Tuple[bool, str]:
     """
 
     if not value:
-        return False, "Номер телефона не может быть пустым. Введите номер в формате +79991234567."
+        return False, "📱 Номер телефона не может быть пустым. Введите номер в формате +79991234567."
 
     prepared = value.replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
     if not PHONE_PATTERN.fullmatch(prepared):
-        return False, "Некорректный номер. Пример: +79991234567"
+        return False, "⚠️ Некорректный номер. Пример: +79991234567"
 
     return True, ""
 
@@ -77,18 +77,18 @@ async def normalize_phone(value: str) -> str:
 async def validate_first_name(value: str) -> Tuple[bool, str]:
     """Проверяет корректность имени."""
     if not value:
-        return False, "Имя не может быть пустым. Введите имя."
+        return False, "👤 Имя не может быть пустым. Введите имя."
     if not NAME_PATTERN.fullmatch(value):
-        return False, "Имя может содержать только буквы, пробелы и дефисы."
+        return False, "⚠️ Имя может содержать только буквы, пробелы и дефисы."
     return True, ""
 
 
 async def validate_last_name(value: str) -> Tuple[bool, str]:
     """Проверяет корректность фамилии."""
     if not value:
-        return False, "Фамилия не может быть пустой. Введите фамилию."
+        return False, "👥 Фамилия не может быть пустой. Введите фамилию."
     if not NAME_PATTERN.fullmatch(value):
-        return False, "Фамилия может содержать только буквы, пробелы и дефисы."
+        return False, "⚠️ Фамилия может содержать только буквы, пробелы и дефисы."
     return True, ""
 
 
@@ -109,22 +109,22 @@ async def validate_birth_date(value: str) -> Tuple[bool, str]:
     """
 
     if not BIRTH_DATE_PATTERN.fullmatch(value):
-        return False, "Неверный формат. Используйте ДД.ММ.ГГГГ."
+        return False, "⚠️ Неверный формат. Используйте ДД.ММ.ГГГГ."
 
     try:
         birth = datetime.strptime(value, "%d.%m.%Y").date()
     except ValueError:
-        return False, "Дата некорректна. Проверьте день, месяц и год."
+        return False, "⚠️ Дата некорректна. Проверьте день, месяц и год."
 
     today = date.today()
     if birth > today:
-        return False, "Дата рождения не может быть в будущем."
+        return False, "⚠️ Дата рождения не может быть в будущем."
 
     age = today.year - birth.year - ((today.month, today.day) < (birth.month, birth.day))
     if age < 18:
-        return False, "Регистрация доступна только для пользователей старше 18 лет."
+        return False, "🔞 Регистрация доступна только для пользователей старше 18 лет."
     if age > 100:
-        return False, "Проверьте дату рождения: указан слишком большой возраст."
+        return False, "⚠️ Проверьте дату рождения: указан слишком большой возраст."
 
     return True, ""
 
@@ -132,7 +132,7 @@ async def validate_birth_date(value: str) -> Tuple[bool, str]:
 async def validate_email(value: str) -> Tuple[bool, str]:
     """Проверяет базовую корректность email."""
     if not value:
-        return False, "Email не может быть пустым. Введите email."
+        return False, "📧 Email не может быть пустым. Введите email."
     if not EMAIL_PATTERN.match(value):
-        return False, "Некорректный email. Пример: name@example.com"
+        return False, "⚠️ Некорректный email. Пример: name@example.com"
     return True, ""

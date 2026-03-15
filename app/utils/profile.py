@@ -23,14 +23,14 @@ def build_profile_review_text(user) -> str:
     birth_text = user.birth_date.strftime("%d.%m.%Y") if user.birth_date else "не указана"
 
     return (
-        "Проверьте введённые данные:\n\n"
-        f"Имя: {user.first_name_input or 'не указано'}\n"
-        f"Фамилия: {user.last_name_input or 'не указана'}\n"
-        f"Телефон: {user.phone_number or 'не указан'}\n"
-        f"Пол: {gender_text}\n"
-        f"Дата рождения: {birth_text}\n"
-        f"Email: {user.email or 'не указан'}\n\n"
-        "Если всё верно, подтвердите. Если нет — выберите редактирование."
+        "🧾 Проверьте введённые данные:\n\n"
+        f"👤 Имя: {user.first_name_input or 'не указано'}\n"
+        f"👥 Фамилия: {user.last_name_input or 'не указана'}\n"
+        f"📱 Телефон: {user.phone_number or 'не указан'}\n"
+        f"⚥ Пол: {gender_text}\n"
+        f"🎂 Дата рождения: {birth_text}\n"
+        f"📧 Email: {user.email or 'не указан'}\n\n"
+        "Если всё верно, нажмите подтверждение. Если нужно изменить — выберите редактирование."
     )
 
 
@@ -38,5 +38,5 @@ async def get_profile_review_text(user_id: int) -> str:
     """Возвращает готовый текст ревью профиля по ID пользователя."""
     user = await db.get_user(user_id)
     if not user:
-        return "Не удалось загрузить анкету пользователя."
+        return "❌ Не удалось загрузить анкету пользователя."
     return build_profile_review_text(user)
