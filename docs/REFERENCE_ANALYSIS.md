@@ -1,138 +1,179 @@
-# Reference Bot Deep Analysis (Telegram -> VK)
+# Глубокий анализ референсного Telegram-бота (`aiogram_bot_01`)
 
-Source analyzed:
-- local clone: `reference_aiogram_bot_01`
-- original: `https://github.com/Evgl2004/aiogram_bot_01`
+## 1. Цель анализа
 
-## 1. High-Level Architecture
+Этот документ фиксирует детальный разбор исходного проекта Telegram-бота, который используется как функциональный референс для VK-бота.
 
-The reference bot follows a layered architecture:
+Основные задачи анализа:
 
-- `handlers/`: user interaction and routing
-- `states/`: FSM states for registration, legacy upgrade, admin broadcast, ticket replies
-- `services/`: business use cases (`tickets`, `broadcast`, `user_sync`, `iiko`)
-- `database/`: SQLAlchemy models + async database access + custom migration runner
-- `middlewares/`: cross-cutting concerns (user upsert, request logging)
-- `keyboards/`: all UI callback payload sources
+1. Понять реальную бизнес-логику, а не только структуру файлов.
+2. Зафиксировать состояния и переходы (FSM).
+3. Описать итоговую модель хранения данных в PostgreSQL.
+4. Выделить платформо-зависимые участки, которые нельзя перенести в VK «как есть».
+5. Подготовить основу для безошибочного поэтапного переноса.
 
-Storage split:
-- Persistent data: PostgreSQL
-- Ephemeral conversational context: Redis FSM storage
+## 2. Что было проанализировано
 
-## 2. Main Functional Domains
+Проанализированы следующие группы файлов из локально клонированного референса:
 
-### 2.1 User Onboarding and Registration
+1. `app/main.py`, `app/config.py` — запуск, инфраструктура, конфигурация.
+2. `app/handlers/*` — пользовательские и административные сценарии.
+3. `app/states/*` — FSM-состояния регистрации, legacy, тикетов, админ-потоков.
+4. `app/services/*` — бизнес-логика (тикеты, рассылка, iiko).
+5. `app/database/*` и `app/database/migrations/*` — модель БД и эволюция схемы.
+6. `app/keyboards/*`, `app/utils/*` — контракт callback-данных, валидации и форматирование.
+7. `docker-compose.yml`, `requirements.txt`, `.env.example` — окружение и зависимости.
 
-Primary entrypoint:
-- `/start` handler in `handlers/start.py`
+## 3. Архитектурная модель референса
 
-Decision logic on start:
-1. Upsert user base profile from messenger metadata.
-2. If user is `is_registered && is_legacy`: run legacy upgrade flow.
-3. If user has not accepted rules: show consent docs and wait for approval.
-4. If rules accepted but registration incomplete: collect contact and profile fields.
-5. If fully registered: show main menu.
+### 3.1 Слои приложения
 
-Registration data collected:
-- phone number
-- first/last name
-- gender
-- birth date (age constraints: 18..100)
-- email
-- notification consent
+Референс построен по четкой слоистой схеме:
 
-After profile confirmation and notification choice:
-- sync with iiko
-- create/update iiko customer
-- issue loyalty card if absent
-- mark `is_registered=True`
-- show main menu
+1. **Transport layer (`handlers`)**
+   - принимает события Telegram;
+   - проверяет состояние пользователя;
+   - направляет выполнение в сервисы и БД.
+2. **FSM layer (`states`)**
+   - хранит текущий шаг диалога;
+   - определяет корректный переход между этапами.
+3. **Business layer (`services`)**
+   - содержит логику тикетов, рассылок, синхронизации с iiko.
+4. **Persistence layer (`database`)**
+   - SQLAlchemy-модели;
+   - асинхронный репозиторий;
+   - миграции схемы.
+5. **View helpers (`keyboards`, `utils`)**
+   - клавиатуры;
+   - безопасные отправки/редактирования;
+   - форматирование вывода.
 
-### 2.2 Legacy Upgrade Flow
+### 3.2 Хранилища
 
-Legacy users are identified via `is_legacy=True`.
+1. **PostgreSQL** — бизнес-данные:
+   - пользователи;
+   - согласия;
+   - тикеты;
+   - статистика;
+   - история миграций.
+2. **Redis** — контекст диалога:
+   - шаги регистрации;
+   - режимы ответа модератора и пользователя;
+   - промежуточные payload FSM.
 
-Flow behavior:
-1. Ask for rules consent again (legal consent refresh).
-2. Detect missing or invalid profile fields.
-3. Request only missing fields in sequence.
-4. Show profile review with editable fields.
-5. Ask notification consent.
-6. Set `is_legacy=False`.
-7. Sync with iiko and complete registration.
+## 4. Бизнес-домены и логика
 
-Key property:
-- Delta collection: only incomplete fields are requested.
+### 4.1 Вход в бота (`/start`)
 
-### 2.3 Main Menu and Support
+Алгоритм старта:
 
-Main menu sections:
-- balance
-- virtual card
-- support
-- vacancies
+1. Пользователь апсертится в таблицу `users`.
+2. Если пользователь помечен `is_legacy=True`, запускается процесс апгрейда.
+3. Если правила не приняты (`rules_accepted=False`), показываются документы и кнопка согласия.
+4. Если регистрация не завершена (`is_registered=False`), запускается сценарий сбора анкеты.
+5. Если регистрация завершена — открывается главное меню.
 
-Support submenu:
-- feedback link
-- create ticket ("ask question")
-- my tickets (shown only if user has at least one ticket)
-- contacts
+Ключевая особенность:
 
-### 2.4 Ticketing and Moderation
+- в `start` реализован «санитарный» сброс зависших состояний.
 
-Core entities:
-- `tickets`
-- `ticket_messages`
+### 4.2 Регистрация нового пользователя
 
-User capabilities:
-- create ticket
-- list own tickets with pagination
-- view ticket details and message thread
-- reply while ticket is not closed
+Обязательные этапы:
 
-Moderator capabilities:
-- view queue by filters (`all`, `open`, `in_progress`)
-- paginate and inspect details
-- reply to ticket
-- close ticket
+1. Согласие с правилами и ПДн.
+2. Получение телефона.
+3. Имя.
+4. Фамилия.
+5. Пол.
+6. Дата рождения.
+7. Email.
+8. Экран проверки анкеты.
+9. Редактирование при необходимости.
+10. Согласие/отказ от уведомлений.
+11. Синхронизация с iiko.
+12. Установка `is_registered=True`.
 
-Business rules:
-- first moderator reply sets `first_response_at`
-- closing sets `closed_at`
-- stats include open/in-progress counts and average first-response time
+Критично:
 
-### 2.5 Admin Broadcast
+- согласия логируются отдельными полями `*_at`;
+- есть явная юридическая фиксация действий пользователя.
 
-Admin flow:
-1. receive outbound message content (many media types supported)
-2. optional URL button
-3. confirmation with recipient count
-4. batch sending with progress updates
+### 4.3 Legacy-апгрейд пользователя
 
-Batch strategy:
-- chunked sends (30 recipients per batch)
-- inter-batch delay
-- progress callback to update admin status message
-- counters: sent/failed/blocked
+Legacy-поток запускается для пользователей со старой структурой данных:
 
-### 2.6 External iiko Integration
+1. Повторный запрос согласия с правилами.
+2. Выявление только отсутствующих/невалидных полей.
+3. Последовательный добор недостающих значений.
+4. Экран ревью с возможностью редактирования.
+5. Согласие на уведомления.
+6. Снятие флага `is_legacy`.
+7. Синхронизация с iiko.
 
-iiko adapter responsibilities:
-- obtain auth token with retries
-- fetch customer info by phone
-- create or update customer profile
-- add loyalty card
-- attach customer to loyalty program
+Главная ценность:
 
-Operational characteristics:
-- explicit retry strategy only for token retrieval
-- business flow retries via user callback "retry_iiko_registration"
+- минимизация лишних вопросов пользователю (дельта-подход).
 
-## 3. FSM Inventory and Transitions
+### 4.4 Главное меню и поддержка
 
-### 3.1 Registration FSM
+Разделы меню:
 
-States (ordered path):
+1. Баланс бонусов.
+2. Виртуальная карта.
+3. Отдел заботы.
+4. Вакансии.
+
+Внутри «Отдела заботы»:
+
+1. Оставить отзыв.
+2. Создать обращение.
+3. Просмотреть свои обращения.
+4. Контакты.
+
+### 4.5 Система тикетов и модерация
+
+Сущности:
+
+1. `tickets` — карточка обращения.
+2. `ticket_messages` — история диалога.
+
+Пользователь может:
+
+1. Создать тикет.
+2. Просматривать список с пагинацией.
+3. Читать переписку.
+4. Отправлять ответы в открытый тикет.
+
+Модератор может:
+
+1. Смотреть очереди по статусам.
+2. Открывать карточки обращений.
+3. Отвечать пользователю.
+4. Закрывать тикет.
+
+Бизнес-правила:
+
+- первый ответ модератора фиксирует `first_response_at`;
+- закрытие фиксирует `closed_at`;
+- метрики рассчитываются по этим timestamp.
+
+### 4.6 Админ-рассылка
+
+Поток админ-панели:
+
+1. Получение контента.
+2. Опционально — кнопка с URL.
+3. Подтверждение отправки.
+4. Пакетная отправка по активным пользователям.
+5. Отображение прогресса и итоговой статистики.
+
+## 5. FSM: состояния и переходы
+
+### 5.1 Регистрация
+
+Группа `Registration` содержит полный маршрут от согласия до iiko:
+
 1. `waiting_for_rules_consent`
 2. `waiting_for_contact`
 3. `waiting_for_first_name`
@@ -141,141 +182,119 @@ States (ordered path):
 6. `waiting_for_birth_date`
 7. `waiting_for_email`
 8. `waiting_for_review`
-9. `waiting_for_notifications_consent`
-10. `waiting_for_iiko_registration`
+9. `waiting_for_edit_choice`
+10. `waiting_for_edit_*`
+11. `waiting_for_notifications_consent`
+12. `waiting_for_iiko_registration`
 
-Editable branch from review:
-- `waiting_for_edit_choice`
-- `waiting_for_edit_first_name`
-- `waiting_for_edit_last_name`
-- `waiting_for_edit_gender`
-- `waiting_for_edit_birth_date`
-- `waiting_for_edit_email`
+### 5.2 Legacy
 
-### 3.2 Legacy FSM
+Группа `LegacyUpgrade` повторяет общую идею регистрации, но с добором только недостающих полей.
 
-States:
-- rules consent
-- missing field collection
-- review
-- edit choice / edit field
-- notification consent
-- iiko registration wait
+### 5.3 Тикеты
 
-### 3.3 Tickets FSM
+Группы:
 
-States:
-- user question creation wait
-- moderator reply wait
-- user reply wait
+1. `TicketStates`
+   - ожидание вопроса пользователя;
+   - ожидание ответа модератора.
+2. `UserTicketStates`
+   - ожидание ответа пользователя в существующем тикете.
 
-### 3.4 Admin FSM
+### 5.4 Админ
 
-States:
-- broadcast content wait
-- button definition wait
-- broadcast confirmation
+Группа `AdminStates`:
 
-## 4. Data Model Analysis
+1. `broadcast_message`
+2. `broadcast_button`
+3. `broadcast_confirm`
 
-Primary tables:
+## 6. Модель данных PostgreSQL (итог)
 
-- `users`
-  - identity and messenger metadata
-  - registration profile fields
-  - legal consent fields and timestamps
-  - flags: `is_registered`, `is_legacy`, `is_moderator`, `is_active`
-- `tickets`
-  - user question, status, lifecycle timestamps
-- `ticket_messages`
-  - full threaded conversation by `ticket_id`
-- `bot_stats`
-  - aggregate counters and last restart
-- `migration_history`
-  - custom migration bookkeeping
+### 6.1 Таблица `users`
 
-Important relationships:
-- `ticket_messages.ticket_id -> tickets.id` (FK in migrations)
+Ключевые поля:
 
-Persistence boundaries:
-- PostgreSQL stores business truth.
-- Redis stores conversational progress only.
+1. Идентификация:
+   - `id`, `username`, `first_name`, `last_name`.
+2. Флаги:
+   - `is_active`, `is_moderator`, `is_registered`, `is_legacy`.
+3. Юридические согласия:
+   - `rules_accepted`, `rules_accepted_at`,
+   - `notifications_allowed`, `notifications_allowed_at`.
+4. Анкета:
+   - `phone_number`, `first_name_input`, `last_name_input`,
+   - `gender`, `birth_date`, `email`.
 
-## 5. Control and Routing Observations
+### 6.2 Таблица `tickets`
 
-Router order in dispatcher is meaningful:
-- start and help are loaded first
-- domain flows follow
-- moderation and user tickets are loaded near the end
+Поля жизненного цикла:
 
-Callbacks are contract-based through keyboard payloads.
-Any migration to VK must preserve callback contract semantics, even if payload encoding changes.
+1. `status`
+2. `created_at`
+3. `first_response_at`
+4. `closed_at`
+5. `updated_at`
 
-## 6. VK Migration Impact
+### 6.3 Таблица `ticket_messages`
 
-### 6.1 Direct Mappings
+Содержит полную историю переписки по тикету.
 
-- Telegram handlers -> VK message/callback handlers
-- SQLAlchemy layer can be reused almost 1:1
-- ticket/broadcast business services are mostly platform-agnostic
+### 6.4 Таблицы инфраструктуры
 
-### 6.2 Non-Direct Mappings
+1. `bot_stats`
+2. `migration_history`
 
-1. Contact collection:
-   - Telegram supports native contact share button.
-   - VK does not provide an equivalent universal flow in the same way.
-   - Required change: manual phone entry + validation and normalization.
+## 7. iiko-интеграция: критические моменты
 
-2. Callback mechanism:
-   - Telegram inline callback data differs from VK keyboard payload events.
-   - Required change: payload schema adapter.
+Реализованные в референсе операции:
 
-3. Message editing semantics:
-   - Telegram flow relies heavily on editing messages.
-   - VK edit support differs by event and message context.
-   - Required change: safe send/edit abstraction with fallback.
+1. Получение/обновление токена API.
+2. Поиск клиента по телефону.
+3. Создание или обновление анкеты клиента.
+4. Выпуск карты.
+5. Подключение к программе лояльности.
 
-4. Attachments and file id model:
-   - Telegram uses `file_id`; VK uses attachment identifiers and upload steps.
-   - Broadcast media logic needs a dedicated VK sender adapter.
+Риск-поведение:
 
-5. Command UX:
-   - Slash commands are native in Telegram.
-   - VK UX is mostly text triggers and keyboard navigation.
-   - Required change: command aliases + entry phrase handling.
+- при ошибках пользователю предлагается явная кнопка «повторить попытку».
 
-## 7. Target Migration Strategy
+## 8. Что переносится в VK без изменений
 
-Recommended approach:
+Можно переносить практически напрямую:
 
-1. Keep domain/services and data models as shared core.
-2. Rebuild transport layer (`handlers`, `ui payloads`, `message helpers`) for VK.
-3. Introduce platform adapter interfaces:
-   - `MessageGateway`
-   - `KeyboardFactory`
-   - `UserIdentityAdapter`
-4. Implement compatibility tests for flow parity:
-   - registration path
-   - legacy path
-   - ticket lifecycle
-   - moderator workflow
-   - admin broadcast
+1. Схему таблиц.
+2. Сервисную логику тикетов.
+3. Валидации анкеты.
+4. Юридическую модель хранения согласий.
+5. Общую iiko-логику.
 
-## 8. Critical Risks to Plan For
+## 9. Что требует адаптации под VK
 
-- Legal consent logging parity (must keep timestamp fields).
-- Phone capture reliability without native contact share.
-- Callback payload schema drift between keyboard definitions and handlers.
-- Attachment handling complexity in VK broadcasts.
-- FSM race conditions under retries and repeated button clicks.
+### 9.1 Контакт/телефон
 
-## 9. What Was Initialized in This Repository
+Telegram-кнопка «поделиться контактом» не имеет полного эквивалента.
+В VK нужен надежный сценарий ручного ввода и нормализации телефона.
 
-This repository now includes:
-- new VK project scaffold
-- PostgreSQL and Redis runtime wiring
-- baseline DB schema matching core entities
-- startup bootstrap checks
-- phased migration plan document
+### 9.2 Callback-контракт
 
-See `docs/VK_PORTING_PLAN.md` for next implementation phases.
+Telegram использует `callback_data`, VK — payload кнопок.
+Нужно унифицированное соглашение по payload-структуре.
+
+### 9.3 Редактирование сообщений
+
+В Telegram активно используется edit-message паттерн.
+В VK требуется более осторожная модель (часто «новое сообщение вместо редактирования»).
+
+### 9.4 Работа с вложениями
+
+Telegram `file_id` и VK attachment-модель отличаются, особенно для рассылок.
+
+## 10. Вывод для миграции
+
+Для корректного переноса нужно:
+
+1. Оставить бизнес-ядро и БД максимально совместимыми.
+2. Переписать транспортные слои (`handlers`, `keyboard payload`, `message utils`) под VK.
+3. Сохранить юридические и аналитические поля без упрощений.
+4. Реализовать равнозначные FSM-сценарии для регистрации, legacy, тикетов и модерации.

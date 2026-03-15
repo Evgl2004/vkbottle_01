@@ -1,43 +1,79 @@
-"""Basic VK handlers."""
+"""Хендлеры входа в бота и первичной маршрутизации пользователя."""
 
 from __future__ import annotations
 
 from vkbottle.bot import Bot, Message
 
 from app.database import db
+from app.handlers.legacy import start_legacy_upgrade
+from app.handlers.menu import show_main_menu
+from app.keyboards.registration import get_rules_keyboard
+from app.states.registration import RegistrationState
+
+
+async def _handle_start_logic(message: Message, bot: Bot) -> None:
+    """Единая логика обработки команды `/start`.
+
+    Алгоритм:
+    1. Гарантирует наличие пользователя в БД.
+    2. Восстанавливает актуальную ветку сценария:
+       - legacy-обновление;
+       - регистрация;
+       - готовое главное меню.
+    """
+
+    user_id = int(message.from_id)
+
+    # Базовый апсерт по ID пользователя.
+    await db.add_or_update_user(user_id=user_id)
+    user = await db.get_user(user_id)
+    if not user:
+        await message.answer("Не удалось инициализировать профиль пользователя.")
+        return
+
+    # Ветка legacy-обновления.
+    if user.is_registered and user.is_legacy:
+        await start_legacy_upgrade(message, bot, user)
+        return
+
+    # Ветка нового пользователя: запрос согласия.
+    if not user.rules_accepted:
+        await bot.state_dispenser.set(user_id, RegistrationState.WAITING_FOR_RULES_CONSENT)
+        await message.answer(
+            "Перед началом работы подтвердите согласие с правилами и обработкой персональных данных.",
+            keyboard=get_rules_keyboard(),
+        )
+        return
+
+    # Ветка неполной регистрации.
+    if not user.is_registered:
+        await bot.state_dispenser.set(user_id, RegistrationState.WAITING_FOR_CONTACT)
+        await message.answer("Введите номер телефона в формате +79991234567.")
+        return
+
+    # Пользователь уже зарегистрирован.
+    await bot.state_dispenser.delete(user_id)
+    await show_main_menu(message, user_name=user.first_name_input or "Гость")
 
 
 def register_start_handlers(bot: Bot) -> None:
-    """Register initial text handlers."""
+    """Регистрирует хендлеры команды запуска и вспомогательной помощи."""
 
-    @bot.on.message(text=["/start", "start", "Start", "menu", "Menu"])
+    @bot.on.private_message(text=["/start", "start", "Start", "начать", "Начать"])
     async def start_handler(message: Message) -> None:
-        user_id = int(message.from_id)
-        await db.add_or_update_user(user_id=user_id)
-        user = await db.get_user(user_id)
-        name = (user.first_name_input if user else None) or "friend"
+        """Точка входа пользователя в бота."""
+        await _handle_start_logic(message, bot)
 
-        await message.answer(
-            "\n".join(
-                [
-                    f"Hello, {name}.",
-                    "VK bot baseline is initialized.",
-                    "Core flows from Telegram reference are documented.",
-                    "Next step: implement registration and ticket flows.",
-                ]
-            )
-        )
-
-    @bot.on.message(text=["/help", "help", "Help"])
+    @bot.on.private_message(text=["/help", "help", "помощь", "Помощь"])
     async def help_handler(message: Message) -> None:
+        """Краткая справка по доступным действиям."""
         await message.answer(
             "\n".join(
                 [
-                    "Available commands:",
-                    "- /start",
-                    "- /help",
-                    "",
-                    "Current status: initialization completed.",
+                    "Команды бота:",
+                    "- /start — начать работу и открыть маршрут регистрации/меню",
+                    "- /help — показать эту справку",
+                    "- /mod — открыть панель модератора (если есть права)",
                 ]
             )
         )

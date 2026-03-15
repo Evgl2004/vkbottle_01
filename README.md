@@ -1,63 +1,114 @@
-# VKBottle Bot (PostgreSQL + Redis)
+# VK-бот на `vkbottle` + `PostgreSQL` + `Redis`
 
-This repository is a VK messenger bot project built on:
-- `vkbottle`
-- `PostgreSQL`
-- `Redis`
+## 1. Назначение проекта
 
-The business reference is the Telegram bot from:
+Этот репозиторий содержит разработку чат-бота для мессенджера ВКонтакте.
+За функциональную основу взят Telegram-бот из репозитория:
+
 - [Evgl2004/aiogram_bot_01](https://github.com/Evgl2004/aiogram_bot_01)
 
-## Current Status
+Текущая цель проекта:
 
-- Reference repo cloned locally to `reference_aiogram_bot_01/`
-- Deep analysis completed in:
-  - `docs/REFERENCE_ANALYSIS.md`
-  - `docs/VK_PORTING_PLAN.md`
-- Project initialized with base structure and runtime bootstrap
+1. Перенести ключевую бизнес-логику из Telegram в VK.
+2. Сохранить структуру данных и сценарии поведения пользователей.
+3. Построить MVP с обязательными модулями:
+   - регистрация пользователя;
+   - обработка legacy-пользователей;
+   - система обращений (тикеты);
+   - модерация тикетов;
+   - интеграция с iiko;
+   - хранение состояния диалогов в Redis;
+   - хранение бизнес-данных в PostgreSQL.
 
-## Project Structure
+## 2. Технологический стек
 
-```text
-app/
-  config.py
-  main.py
-  handlers/
-  database/
-  services/
-  states/
-docs/
-scripts/
-docker-compose.yml
-Dockerfile
-requirements.txt
-```
+- Python 3.x
+- `vkbottle` (транспортный слой VK)
+- `SQLAlchemy` + `asyncpg` (асинхронный доступ к PostgreSQL)
+- `redis` (FSM/состояния диалога)
+- `pydantic` / `pydantic-settings` (конфигурация)
+- `loguru` (логирование)
 
-## Quick Start
+## 3. Ветки и процесс разработки
 
-1. Copy environment file:
+- `main`:
+  - базовая инициализация проекта;
+  - стартовая структура и документация.
+- `codex/develop-cai`:
+  - активная функциональная разработка.
+
+Важное правило:
+
+- Коммиты выполняются после каждого логически завершенного этапа.
+- Сообщения коммитов оформляются подробно и на русском языке.
+
+## 4. Документация по анализу референса
+
+В репозитории зафиксирован отдельный подробный анализ Telegram-референса:
+
+- [REFERENCE_ANALYSIS.md](C:/Users/admin_eas/PycharmProjects/vkbottle/docs/REFERENCE_ANALYSIS.md)
+- [VK_PORTING_PLAN.md](C:/Users/admin_eas/PycharmProjects/vkbottle/docs/VK_PORTING_PLAN.md)
+
+Эти документы описывают:
+
+1. Архитектуру исходного проекта.
+2. Состояния и переходы FSM.
+3. Модель хранения данных.
+4. Риски и технические различия между Telegram и VK.
+5. Поэтапный план миграции.
+
+## 5. Быстрый запуск (локально)
+
+### 5.1 Подготовка `.env`
+
+Скопируйте шаблон:
 
 ```bash
 cp .env.example .env
 ```
 
-2. Fill required env vars:
+Заполните обязательные переменные:
+
 - `VK_BOT_TOKEN`
 - `POSTGRES_PASSWORD`
-- `ADMIN_USER_IDS` (optional)
+- `ADMIN_USER_IDS` (опционально, но желательно для модерации/админ-доступа)
 
-3. Run services:
+### 5.2 Запуск через Docker
 
 ```bash
 docker compose up --build
 ```
 
-## Git Workflow
+Контейнеры:
 
-- `main`: project initialization baseline
-- `codex/develop-cai`: active development branch for feature work
+- `bot`
+- `postgres`
+- `redis`
 
-## Notes
+## 6. Работа через локальное виртуальное окружение
 
-- This initialization focuses on architecture and migration groundwork.
-- Feature-complete parity with Telegram reference is planned in phases (see docs).
+Проект ведется с обязательным использованием локального окружения `.venv`.
+
+Пример запуска python-команд:
+
+```bash
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m app.main
+```
+
+## 7. Текущий статус
+
+На текущем этапе в репозитории уже присутствуют:
+
+1. Базовый каркас приложения.
+2. Интеграционные точки для PostgreSQL и Redis.
+3. Подробные аналитические документы.
+4. Подготовка к реализации полного MVP VK-бота.
+
+## 8. Дальнейшие шаги
+
+1. Завершение полноценного VK-транспортного слоя.
+2. Полный перенос FSM-процессов регистрации и legacy-обновления.
+3. Реализация тикетов и модерации.
+4. Подключение iiko и обработка повторных попыток синхронизации.
+5. Локальная проверка сценариев и стабилизация логики.

@@ -1,5 +1,11 @@
-"""Service package exports."""
+"""Пакет сервисов бизнес- и инфраструктурного уровня.
 
-from app.services.startup import bootstrap
+Экспортирует:
+1. функции подготовки/остановки инфраструктуры;
+2. модуль iiko-сервиса для удобного импорта из других слоёв.
+"""
 
-__all__ = ["bootstrap"]
+from . import iiko_service
+from .startup import prepare_infrastructure, shutdown_infrastructure
+
+__all__ = ["prepare_infrastructure", "shutdown_infrastructure", "iiko_service"]

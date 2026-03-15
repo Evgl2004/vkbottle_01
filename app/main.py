@@ -1,20 +1,33 @@
-"""Application entrypoint."""
+"""Точка входа приложения VK-бота.
+
+Файл отвечает за:
+1. настройку логирования;
+2. подготовку инфраструктуры (PostgreSQL, Redis, iiko);
+3. создание экземпляра `Bot` и регистрацию хендлеров;
+4. запуск long polling.
+"""
 
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
+
+# Важно установить переменную ДО импорта vkbottle:
+# иначе внутри vkbottle может включиться логгер с enqueue=True,
+# который в некоторых окружениях даёт PermissionError.
+os.environ.setdefault("LOGURU_AUTOINIT", "1")
 
 from loguru import logger
 from vkbottle.bot import Bot
 
 from app.config import settings
 from app.handlers import setup_handlers
-from app.services import bootstrap
+from app.services import prepare_infrastructure, shutdown_infrastructure
 
 
 def configure_logging() -> None:
-    """Configure process logger."""
+    """Настраивает формат и уровень логирования процесса."""
     logger.remove()
     logger.add(
         sys.stdout,
@@ -25,15 +38,20 @@ def configure_logging() -> None:
 
 
 def main() -> None:
-    """Start application."""
+    """Запускает приложение в режиме long polling."""
+
     configure_logging()
-    logger.info("starting VK bot")
+    logger.info("Запуск VK-бота")
 
-    asyncio.run(bootstrap())
-
-    bot = Bot(token=settings.vk_bot_token)
+    state_dispenser = asyncio.run(prepare_infrastructure())
+    bot = Bot(token=settings.vk_bot_token, state_dispenser=state_dispenser)
     setup_handlers(bot)
-    bot.run_forever()
+
+    try:
+        bot.run_forever()
+    finally:
+        asyncio.run(shutdown_infrastructure(state_dispenser))
+        logger.info("Приложение остановлено корректно")
 
 
 if __name__ == "__main__":

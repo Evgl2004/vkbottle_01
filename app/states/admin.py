@@ -1,7 +1,11 @@
-"""Admin broadcast state identifiers."""
+"""FSM-состояния административных операций."""
+
+from vkbottle import BaseStateGroup
 
 
-class AdminState:
-    BROADCAST_MESSAGE = "admin:broadcast_message"
-    BROADCAST_BUTTON = "admin:broadcast_button"
-    BROADCAST_CONFIRM = "admin:broadcast_confirm"
+class AdminState(BaseStateGroup):
+    """Состояния для сценария массовой рассылки и вспомогательных админ-действий."""
+
+    BROADCAST_MESSAGE = "broadcast_message"
+    BROADCAST_BUTTON = "broadcast_button"
+    BROADCAST_CONFIRM = "broadcast_confirm"

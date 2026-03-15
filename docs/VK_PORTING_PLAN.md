@@ -1,81 +1,118 @@
-# VK Porting Plan
+# План реализации VK MVP
 
-## Phase 0: Baseline Initialization (completed)
+## 1. Вводные принципы
 
-- [x] Clone and inspect Telegram reference
-- [x] Document architecture, FSM, data model, and business flows
-- [x] Initialize new VKBottle project scaffold
-- [x] Connect PostgreSQL + Redis in runtime bootstrap
+План строится с учетом обязательных требований:
 
-## Phase 1: Transport Layer Foundation
+1. Полная функциональная преемственность относительно референса Telegram.
+2. Транспортный слой адаптирован под VK (`vkbottle`), без потери бизнес-логики.
+3. Вся документация, комментарии и докстринги — максимально подробные и на русском языке.
+4. Работа выполняется в ветке `codex/develop-cai`.
+5. Локальные коммиты выполняются после каждого логического завершения.
 
-Goal: enable stable VK routing and callback payload handling.
+## 2. Обязательный функциональный минимум (MVP)
 
-Tasks:
-1. Add common VK payload schema helpers (`action`, `entity`, `id`, `page`).
-2. Implement safe send/edit abstraction for VK API behavior.
-3. Add middleware for user upsert and request logging.
-4. Add keyboard factories for main menu, support, moderation, and admin.
+В MVP должны войти:
 
-Acceptance criteria:
-- bot starts and handles text triggers for `/start`, `help`, `menu`
-- callback payloads are parsed and routed deterministically
+1. Регистрация пользователя (полный процесс анкеты).
+2. Legacy-апгрейд пользователей с неполными данными.
+3. Система обращений (тикеты) для пользователей.
+4. Модерация обращений (просмотр, ответ, закрытие).
+5. Интеграция с iiko (создание/обновление клиента, выпуск карты, подключение программы).
+6. Хранение состояний диалога в Redis.
+7. Хранение бизнес-данных в PostgreSQL.
 
-## Phase 2: Registration + Legacy Flows
+## 3. Этапы разработки
 
-Goal: parity with Telegram onboarding logic.
+### Этап A. Инфраструктурный каркас
 
-Tasks:
-1. Implement registration FSM path:
-   - rules consent
-   - phone input and validation
-   - profile fields
-   - review + edits
-   - notification consent
-2. Implement legacy upgrade FSM:
-   - detect missing fields
-   - delta field collection
-   - review/edit
-   - notification consent
-3. Implement iiko sync adapters and retry flow.
+Содержание:
 
-Acceptance criteria:
-- new and legacy users both reach main menu after successful flow
-- all consent timestamps are persisted
+1. Базовая инициализация приложения `vkbottle`.
+2. Конфигурация через `.env` и `pydantic-settings`.
+3. Подключение PostgreSQL (SQLAlchemy async).
+4. Подключение Redis.
+5. Подготовка `docker-compose` для локального запуска.
 
-## Phase 3: Support Tickets + Moderation
+Критерий готовности:
 
-Goal: parity for support and moderator operations.
+- приложение стартует, поднимает подключения к БД и Redis, корректно логирует состояние.
 
-Tasks:
-1. Implement user ticket creation and list/detail/reply flow.
-2. Implement moderator dashboard with filters and pagination.
-3. Implement ticket close and response-time metrics.
-4. Add notifications to moderators and users.
+### Этап B. Данные и сервисы
 
-Acceptance criteria:
-- full lifecycle `open -> in_progress -> closed` works end-to-end
+Содержание:
 
-## Phase 4: Admin Broadcast
+1. Модели `users`, `tickets`, `ticket_messages`, `bot_stats`, `migration_history`.
+2. Репозиторные методы для CRUD-потоков.
+3. Сервис тикетов (создание, пагинация, статусы, статистика).
+4. Сервис iiko (API-клиент + бизнес-обертка).
+5. Сервис синхронизации пользователя с iiko.
 
-Goal: parity for admin mass messaging.
+Критерий готовности:
 
-Tasks:
-1. Implement admin-only broadcast wizard (content + optional button + confirm).
-2. Implement chunked sender with rate control.
-3. Persist campaign execution stats.
-4. Add progress reporting during send.
+- сервисные операции выполняются независимо от транспортного слоя.
 
-Acceptance criteria:
-- admin can run broadcast with final success/fail/blocked stats
+### Этап C. FSM и пользовательские сценарии
 
-## Phase 5: Hardening
+Содержание:
 
-Tasks:
-1. Add migration scripts for schema evolution.
-2. Add integration tests for critical FSM paths.
-3. Add structured logging and error telemetry.
-4. Add deployment profile and production checks.
+1. FSM регистрации нового пользователя.
+2. FSM legacy-апгрейда.
+3. Меню VK и клавиатуры с payload-контрактом.
+4. Валидации полей анкеты.
+5. Переходы в iiko-синхронизацию и обработка повторов.
 
-Acceptance criteria:
-- deterministic startup, reproducible migrations, baseline test suite green
+Критерий готовности:
+
+- пользователь проходит путь от входа до рабочего меню.
+
+### Этап D. Тикеты и модерация
+
+Содержание:
+
+1. Создание обращений пользователем.
+2. Просмотр «мои обращения» с пагинацией.
+3. Ответы пользователя в существующий тикет.
+4. Интерфейс модератора:
+   - фильтры статусов;
+   - просмотр истории;
+   - ответ;
+   - закрытие.
+5. Уведомления о новых сообщениях по роли.
+
+Критерий готовности:
+
+- замкнутый цикл диалога «пользователь ↔ модератор» работает end-to-end.
+
+### Этап E. Документация и стабилизация
+
+Содержание:
+
+1. Подробные русскоязычные docstring/комментарии по каждому модулю.
+2. Проверка согласованности payload-контрактов кнопок и обработчиков.
+3. Проверка консистентности FSM-переходов и сбросов состояния.
+4. Проверка запуска через `.venv` и Docker.
+
+Критерий готовности:
+
+- код и документация готовы для поддержки и расширения.
+
+## 4. Контрольные риски
+
+1. Неэквивалентность Telegram callback и VK payload.
+2. Нестабильные ветки сценариев при повторных нажатиях кнопок.
+3. Неполная фиксация юридически значимых согласий.
+4. Ошибки нормализации телефона для iiko.
+5. Потеря состояния при неправильном ключе хранения FSM.
+
+## 5. Критерии приемки MVP
+
+MVP считается готовым, если выполнены все пункты:
+
+1. Пользовательский путь регистрации завершаетcя установкой `is_registered=True`.
+2. Legacy-пользователь проходит только недостающие шаги и снимает `is_legacy`.
+3. Создание/обмен сообщениями в тикете работает в обе стороны.
+4. Модератор может ответить и закрыть тикет.
+5. iiko-синхронизация вызывается и отрабатывает успешный/ошибочный сценарий с повтором.
+6. Состояния хранятся в Redis, бизнес-данные — в PostgreSQL.
+7. Документация, комментарии и docstring соответствуют требованию подробности и русскому языку.

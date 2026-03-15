@@ -1,4 +1,4 @@
-"""State namespace exports."""
+"""Пакет групп состояний (FSM) приложения."""
 
 from app.states.admin import AdminState
 from app.states.legacy import LegacyState
