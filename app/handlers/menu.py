@@ -632,3 +632,4 @@ def register_menu_handlers(bot: Bot) -> None:
                 started_at=started_at,
                 command=command,
             )
+            raise
