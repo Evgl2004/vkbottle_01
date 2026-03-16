@@ -9,7 +9,16 @@ from vkbottle.bot import Bot, Message, MessageEvent
 from vkbottle_types.events import GroupEventType
 
 from app.database import db
-from app.handlers.common import edit_or_send_event_message, extract_payload, is_moderator
+from app.handlers.common import (
+    edit_or_send_event_message,
+    extract_payload,
+    fail_callback_trace,
+    finish_callback_trace,
+    is_moderator,
+    mark_callback_matched,
+    mark_callback_skipped,
+    start_callback_trace,
+)
 from app.keyboards.moderation import (
     get_moderation_main_keyboard,
     get_moderation_ticket_details_keyboard,
@@ -407,7 +416,7 @@ def register_moderation_handlers(bot: Bot) -> None:
         """Обрабатывает callback-кнопки модераторского интерфейса."""
 
         payload: dict[str, Any] = event.get_payload_json() or {}
-        command = payload.get("cmd")
+        command, started_at = start_callback_trace("moderation", event, payload)
         if command not in {
             CMD_MOD_MAIN,
             CMD_MOD_TICKETS,
@@ -416,84 +425,200 @@ def register_moderation_handlers(bot: Bot) -> None:
             CMD_MOD_REPLY,
             CMD_MOD_CLOSE,
         }:
-            return
-
-        await event.send_empty_answer()
-        user_id = int(event.user_id)
-        if not await is_moderator(user_id):
-            await edit_or_send_event_message(event, "⛔ У вас нет прав модератора.")
-            return
-
-        logger.debug(
-            "moderation callback (user_id={}, peer_id={}, cmd={}, payload={})",
-            user_id,
-            int(event.peer_id),
-            command,
-            payload,
-        )
-
-        if command == CMD_MOD_MAIN:
-            await bot.state_dispenser.delete(user_id)
-            await _show_moderation_dashboard_event(event)
-            return
-
-        if command == CMD_MOD_TICKETS:
-            filter_key = str(payload.get("filter", "all"))
-            await _show_moderation_tickets_page_event(event, filter_key=filter_key, page=1)
-            return
-
-        if command == CMD_MOD_TICKETS_PAGE:
-            filter_key = str(payload.get("filter", "all"))
-            try:
-                page = max(int(payload.get("page", 1)), 1)
-            except (TypeError, ValueError):
-                page = 1
-            await _show_moderation_tickets_page_event(event, filter_key=filter_key, page=page)
-            return
-
-        if command == CMD_MOD_TICKET:
-            filter_key = str(payload.get("filter", "all"))
-            try:
-                ticket_id = int(payload.get("ticket_id"))
-            except (TypeError, ValueError):
-                await edit_or_send_event_message(event, "⚠️ Не удалось определить тикет.")
-                return
-            await _show_moderation_ticket_details_event(event, ticket_id=ticket_id, filter_key=filter_key)
-            return
-
-        if command == CMD_MOD_REPLY:
-            try:
-                ticket_id = int(payload.get("ticket_id"))
-            except (TypeError, ValueError):
-                await edit_or_send_event_message(event, "⚠️ Не удалось определить тикет.")
-                return
-
-            ticket = await ticket_service.get_ticket(ticket_id)
-            if not ticket:
-                await edit_or_send_event_message(event, "❌ Тикет не найден.")
-                return
-            if ticket.status == "closed":
-                await edit_or_send_event_message(event, "🔒 Тикет уже закрыт. Ответ невозможен.")
-                return
-
-            await bot.state_dispenser.set(
-                user_id,
-                TicketState.WAITING_FOR_MODERATOR_REPLY,
-                ticket_id=ticket_id,
+            mark_callback_skipped(
+                "moderation",
+                event,
+                reason="unsupported_cmd",
+                command=command,
             )
-            await edit_or_send_event_message(event, f"✍️ Введите ответ пользователю по тикету #{ticket_id}.")
             return
 
-        if command == CMD_MOD_CLOSE:
-            try:
-                ticket_id = int(payload.get("ticket_id"))
-            except (TypeError, ValueError):
-                await edit_or_send_event_message(event, "⚠️ Не удалось определить тикет.")
+        try:
+            await event.send_empty_answer()
+            mark_callback_matched("moderation", event, command=command)
+
+            user_id = int(event.user_id)
+            if not await is_moderator(user_id):
+                await edit_or_send_event_message(event, "⛔ У вас нет прав модератора.")
+                finish_callback_trace(
+                    "moderation",
+                    event,
+                    started_at=started_at,
+                    action="access_denied",
+                    command=command,
+                )
                 return
 
-            ok = await ticket_service.close_ticket(ticket_id)
-            if not ok:
-                await edit_or_send_event_message(event, "❌ Не удалось закрыть тикет: запись не найдена.")
+            logger.debug(
+                "moderation callback (user_id={}, peer_id={}, cmd={}, payload={})",
+                user_id,
+                int(event.peer_id),
+                command,
+                payload,
+            )
+
+            if command == CMD_MOD_MAIN:
+                await bot.state_dispenser.delete(user_id)
+                await _show_moderation_dashboard_event(event)
+                finish_callback_trace(
+                    "moderation",
+                    event,
+                    started_at=started_at,
+                    action="open_dashboard",
+                    command=command,
+                )
                 return
 
-            await _show_moderation_ticket_details_event(event, ticket_id=ticket_id, filter_key="all")
+            if command == CMD_MOD_TICKETS:
+                filter_key = str(payload.get("filter", "all"))
+                await _show_moderation_tickets_page_event(event, filter_key=filter_key, page=1)
+                finish_callback_trace(
+                    "moderation",
+                    event,
+                    started_at=started_at,
+                    action=f"open_tickets_{filter_key}_page_1",
+                    command=command,
+                )
+                return
+
+            if command == CMD_MOD_TICKETS_PAGE:
+                filter_key = str(payload.get("filter", "all"))
+                try:
+                    page = max(int(payload.get("page", 1)), 1)
+                except (TypeError, ValueError):
+                    page = 1
+                await _show_moderation_tickets_page_event(event, filter_key=filter_key, page=page)
+                finish_callback_trace(
+                    "moderation",
+                    event,
+                    started_at=started_at,
+                    action=f"open_tickets_{filter_key}_page_{page}",
+                    command=command,
+                )
+                return
+
+            if command == CMD_MOD_TICKET:
+                filter_key = str(payload.get("filter", "all"))
+                try:
+                    ticket_id = int(payload.get("ticket_id"))
+                except (TypeError, ValueError):
+                    await edit_or_send_event_message(event, "⚠️ Не удалось определить тикет.")
+                    finish_callback_trace(
+                        "moderation",
+                        event,
+                        started_at=started_at,
+                        action="ticket_parse_error",
+                        command=command,
+                    )
+                    return
+                await _show_moderation_ticket_details_event(event, ticket_id=ticket_id, filter_key=filter_key)
+                finish_callback_trace(
+                    "moderation",
+                    event,
+                    started_at=started_at,
+                    action=f"open_ticket_{ticket_id}",
+                    command=command,
+                )
+                return
+
+            if command == CMD_MOD_REPLY:
+                try:
+                    ticket_id = int(payload.get("ticket_id"))
+                except (TypeError, ValueError):
+                    await edit_or_send_event_message(event, "⚠️ Не удалось определить тикет.")
+                    finish_callback_trace(
+                        "moderation",
+                        event,
+                        started_at=started_at,
+                        action="reply_parse_error",
+                        command=command,
+                    )
+                    return
+
+                ticket = await ticket_service.get_ticket(ticket_id)
+                if not ticket:
+                    await edit_or_send_event_message(event, "❌ Тикет не найден.")
+                    finish_callback_trace(
+                        "moderation",
+                        event,
+                        started_at=started_at,
+                        action=f"reply_ticket_not_found_{ticket_id}",
+                        command=command,
+                    )
+                    return
+                if ticket.status == "closed":
+                    await edit_or_send_event_message(event, "🔒 Тикет уже закрыт. Ответ невозможен.")
+                    finish_callback_trace(
+                        "moderation",
+                        event,
+                        started_at=started_at,
+                        action=f"reply_closed_ticket_{ticket_id}",
+                        command=command,
+                    )
+                    return
+
+                await bot.state_dispenser.set(
+                    user_id,
+                    TicketState.WAITING_FOR_MODERATOR_REPLY,
+                    ticket_id=ticket_id,
+                )
+                await edit_or_send_event_message(event, f"✍️ Введите ответ пользователю по тикету #{ticket_id}.")
+                finish_callback_trace(
+                    "moderation",
+                    event,
+                    started_at=started_at,
+                    action=f"start_reply_{ticket_id}",
+                    command=command,
+                )
+                return
+
+            if command == CMD_MOD_CLOSE:
+                try:
+                    ticket_id = int(payload.get("ticket_id"))
+                except (TypeError, ValueError):
+                    await edit_or_send_event_message(event, "⚠️ Не удалось определить тикет.")
+                    finish_callback_trace(
+                        "moderation",
+                        event,
+                        started_at=started_at,
+                        action="close_parse_error",
+                        command=command,
+                    )
+                    return
+
+                ok = await ticket_service.close_ticket(ticket_id)
+                if not ok:
+                    await edit_or_send_event_message(event, "❌ Не удалось закрыть тикет: запись не найдена.")
+                    finish_callback_trace(
+                        "moderation",
+                        event,
+                        started_at=started_at,
+                        action=f"close_not_found_{ticket_id}",
+                        command=command,
+                    )
+                    return
+
+                await _show_moderation_ticket_details_event(event, ticket_id=ticket_id, filter_key="all")
+                finish_callback_trace(
+                    "moderation",
+                    event,
+                    started_at=started_at,
+                    action=f"close_ticket_{ticket_id}",
+                    command=command,
+                )
+                return
+
+            mark_callback_skipped(
+                "moderation",
+                event,
+                reason="no_branch_after_match",
+                command=command,
+            )
+        except Exception:
+            fail_callback_trace(
+                "moderation",
+                event,
+                started_at=started_at,
+                command=command,
+            )
+            raise

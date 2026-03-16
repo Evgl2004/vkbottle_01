@@ -16,7 +16,15 @@ from vkbottle.bot import Bot, Message, MessageEvent
 from vkbottle_types.events import GroupEventType
 
 from app.database import db
-from app.handlers.common import EventMessageAdapter, edit_or_send_event_message
+from app.handlers.common import (
+    EventMessageAdapter,
+    edit_or_send_event_message,
+    fail_callback_trace,
+    finish_callback_trace,
+    mark_callback_matched,
+    mark_callback_skipped,
+    start_callback_trace,
+)
 from app.keyboards.menu import (
     get_back_to_main_keyboard,
     get_back_to_support_keyboard,
@@ -405,7 +413,7 @@ def register_menu_handlers(bot: Bot) -> None:
         """
 
         payload: dict[str, Any] = event.get_payload_json() or {}
-        command = payload.get("cmd")
+        command, started_at = start_callback_trace("menu", event, payload)
         if command not in {
             CMD_MAIN_MENU,
             CMD_BACK_TO_MAIN,
@@ -418,116 +426,209 @@ def register_menu_handlers(bot: Bot) -> None:
             CMD_SUPPORT_CONTACTS,
             CMD_SUPPORT_QUESTION,
         }:
-            return
-
-        # Подтверждаем callback, чтобы на клиенте не висело состояние ожидания.
-        await event.send_empty_answer()
-        logger.debug(
-            "Обработка menu callback (user_id={}, peer_id={}, cmd={})",
-            int(event.user_id),
-            int(event.peer_id),
-            command,
-        )
-
-        if command in {CMD_MAIN_MENU, CMD_BACK_TO_MAIN}:
-            await bot.state_dispenser.delete(int(event.user_id))
-            await _show_main_menu_event(event)
-            return
-
-        if command in {CMD_SUPPORT, CMD_BACK_TO_SUPPORT}:
-            await bot.state_dispenser.delete(int(event.user_id))
-            await _show_support_menu_event(event)
-            return
-
-        if command == CMD_BALANCE:
-            user = await db.get_user(int(event.user_id))
-            if not user or not user.phone_number:
-                await edit_or_send_event_message(
-                    event,
-                    "❌ Номер телефона не найден. Пожалуйста, пройдите регистрацию заново через /start.",
-                    keyboard=get_back_to_main_keyboard(),
-                )
-                return
-
-            info = await iiko_service.get_customer_info(user.phone_number)
-            if not info:
-                await edit_or_send_event_message(
-                    event,
-                    "❌ Не удалось получить баланс бонусов. Попробуйте позже.",
-                    keyboard=get_back_to_main_keyboard(),
-                )
-                return
-
-            balance = info.get("balance", 0)
-            logger.info("Показан бонусный баланс через callback (user_id={}, balance={})", int(event.user_id), balance)
-            await edit_or_send_event_message(
+            mark_callback_skipped(
+                "menu",
                 event,
-                "\n".join(
-                    [
-                        "💰 Ваш бонусный баланс:",
-                        f"• Доступно бонусов: {balance}",
-                        f"• Программа: {info.get('program_name') or 'не указана'}",
-                    ]
-                ),
-                keyboard=get_back_to_main_keyboard(),
+                reason="unsupported_cmd",
+                command=command,
             )
             return
 
-        if command == CMD_VIRTUAL_CARD:
-            await edit_or_send_event_message(
-                event,
-                "🪪 Загружаю виртуальные карты и формирую QR-коды...",
-                keyboard=get_back_to_main_keyboard(),
-            )
-            await _show_virtual_cards_for_actor(
-                EventMessageAdapter(event),
+        try:
+            # Подтверждаем callback, чтобы на клиенте не висело состояние ожидания.
+            await event.send_empty_answer()
+            mark_callback_matched("menu", event, command=command)
+            logger.debug(
+                "Обработка menu callback (user_id={}, peer_id={}, cmd={})",
                 int(event.user_id),
-                send_intro=False,
+                int(event.peer_id),
+                command,
             )
-            return
 
-        if command == CMD_VACANCIES:
-            await edit_or_send_event_message(
+            if command in {CMD_MAIN_MENU, CMD_BACK_TO_MAIN}:
+                await bot.state_dispenser.delete(int(event.user_id))
+                await _show_main_menu_event(event)
+                finish_callback_trace(
+                    "menu",
+                    event,
+                    started_at=started_at,
+                    action="open_main_menu",
+                    command=command,
+                )
+                return
+
+            if command in {CMD_SUPPORT, CMD_BACK_TO_SUPPORT}:
+                await bot.state_dispenser.delete(int(event.user_id))
+                await _show_support_menu_event(event)
+                finish_callback_trace(
+                    "menu",
+                    event,
+                    started_at=started_at,
+                    action="open_support_menu",
+                    command=command,
+                )
+                return
+
+            if command == CMD_BALANCE:
+                user = await db.get_user(int(event.user_id))
+                if not user or not user.phone_number:
+                    await edit_or_send_event_message(
+                        event,
+                        "❌ Номер телефона не найден. Пожалуйста, пройдите регистрацию заново через /start.",
+                        keyboard=get_back_to_main_keyboard(),
+                    )
+                    finish_callback_trace(
+                        "menu",
+                        event,
+                        started_at=started_at,
+                        action="balance_no_phone",
+                        command=command,
+                    )
+                    return
+
+                info = await iiko_service.get_customer_info(user.phone_number)
+                if not info:
+                    await edit_or_send_event_message(
+                        event,
+                        "❌ Не удалось получить баланс бонусов. Попробуйте позже.",
+                        keyboard=get_back_to_main_keyboard(),
+                    )
+                    finish_callback_trace(
+                        "menu",
+                        event,
+                        started_at=started_at,
+                        action="balance_iiko_error",
+                        command=command,
+                    )
+                    return
+
+                balance = info.get("balance", 0)
+                logger.info("Показан бонусный баланс через callback (user_id={}, balance={})", int(event.user_id), balance)
+                await edit_or_send_event_message(
+                    event,
+                    "\n".join(
+                        [
+                            "💰 Ваш бонусный баланс:",
+                            f"• Доступно бонусов: {balance}",
+                            f"• Программа: {info.get('program_name') or 'не указана'}",
+                        ]
+                    ),
+                    keyboard=get_back_to_main_keyboard(),
+                )
+                finish_callback_trace(
+                    "menu",
+                    event,
+                    started_at=started_at,
+                    action="show_balance",
+                    command=command,
+                )
+                return
+
+            if command == CMD_VIRTUAL_CARD:
+                await edit_or_send_event_message(
+                    event,
+                    "🪪 Загружаю виртуальные карты и формирую QR-коды...",
+                    keyboard=get_back_to_main_keyboard(),
+                )
+                await _show_virtual_cards_for_actor(
+                    EventMessageAdapter(event),
+                    int(event.user_id),
+                    send_intro=False,
+                )
+                finish_callback_trace(
+                    "menu",
+                    event,
+                    started_at=started_at,
+                    action="show_virtual_card",
+                    command=command,
+                )
+                return
+
+            if command == CMD_VACANCIES:
+                await edit_or_send_event_message(
+                    event,
+                    "\n".join(
+                        [
+                            "💼 Вакансии:",
+                            "Мы ищем ответственных и энергичных сотрудников.",
+                            "Подробности: https://team.sobolevalliance.su/vacancy",
+                        ]
+                    ),
+                    keyboard=get_back_to_main_keyboard(),
+                )
+                finish_callback_trace(
+                    "menu",
+                    event,
+                    started_at=started_at,
+                    action="show_vacancies",
+                    command=command,
+                )
+                return
+
+            if command == CMD_SUPPORT_FEEDBACK:
+                await edit_or_send_event_message(
+                    event,
+                    "✍️ Оставить отзыв можно по кнопке ниже.",
+                    keyboard=get_feedback_link_keyboard(),
+                )
+                finish_callback_trace(
+                    "menu",
+                    event,
+                    started_at=started_at,
+                    action="show_feedback",
+                    command=command,
+                )
+                return
+
+            if command == CMD_SUPPORT_CONTACTS:
+                await edit_or_send_event_message(
+                    event,
+                    "\n".join(
+                        [
+                            "📇 Контакты:",
+                            "• Почта: info@sobolev.rest",
+                            "• Сайт: https://sobolevalliance.su",
+                            "• Соцсети: @sobolevalliance",
+                        ]
+                    ),
+                    keyboard=get_back_to_support_keyboard(),
+                )
+                finish_callback_trace(
+                    "menu",
+                    event,
+                    started_at=started_at,
+                    action="show_contacts",
+                    command=command,
+                )
+                return
+
+            if command == CMD_SUPPORT_QUESTION:
+                await bot.state_dispenser.set(int(event.user_id), TicketState.WAITING_FOR_QUESTION)
+                await edit_or_send_event_message(
+                    event,
+                    "❓ Опишите ваш вопрос одним сообщением.\n"
+                    "Модератор увидит обращение и ответит в ближайшее время.",
+                    keyboard=get_back_to_support_keyboard(),
+                )
+                finish_callback_trace(
+                    "menu",
+                    event,
+                    started_at=started_at,
+                    action="start_question_flow",
+                    command=command,
+                )
+                return
+
+            mark_callback_skipped(
+                "menu",
                 event,
-                "\n".join(
-                    [
-                        "💼 Вакансии:",
-                        "Мы ищем ответственных и энергичных сотрудников.",
-                        "Подробности: https://team.sobolevalliance.su/vacancy",
-                    ]
-                ),
-                keyboard=get_back_to_main_keyboard(),
+                reason="no_branch_after_match",
+                command=command,
             )
-            return
-
-        if command == CMD_SUPPORT_FEEDBACK:
-            await edit_or_send_event_message(
+        except Exception:
+            fail_callback_trace(
+                "menu",
                 event,
-                "✍️ Оставить отзыв можно по кнопке ниже.",
-                keyboard=get_feedback_link_keyboard(),
-            )
-            return
-
-        if command == CMD_SUPPORT_CONTACTS:
-            await edit_or_send_event_message(
-                event,
-                "\n".join(
-                    [
-                        "📇 Контакты:",
-                        "• Почта: info@sobolev.rest",
-                        "• Сайт: https://sobolevalliance.su",
-                        "• Соцсети: @sobolevalliance",
-                    ]
-                ),
-                keyboard=get_back_to_support_keyboard(),
-            )
-            return
-
-        if command == CMD_SUPPORT_QUESTION:
-            await bot.state_dispenser.set(int(event.user_id), TicketState.WAITING_FOR_QUESTION)
-            await edit_or_send_event_message(
-                event,
-                "❓ Опишите ваш вопрос одним сообщением.\n"
-                "Модератор увидит обращение и ответит в ближайшее время.",
-                keyboard=get_back_to_support_keyboard(),
+                started_at=started_at,
+                command=command,
             )

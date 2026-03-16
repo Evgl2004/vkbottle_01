@@ -9,7 +9,16 @@ from vkbottle.bot import Bot, Message, MessageEvent
 from vkbottle_types.events import GroupEventType
 
 from app.database import db
-from app.handlers.common import edit_or_send_event_message, extract_payload, get_moderator_ids
+from app.handlers.common import (
+    edit_or_send_event_message,
+    extract_payload,
+    fail_callback_trace,
+    finish_callback_trace,
+    get_moderator_ids,
+    mark_callback_matched,
+    mark_callback_skipped,
+    start_callback_trace,
+)
 from app.keyboards.menu import get_back_to_main_keyboard, get_back_to_support_keyboard
 from app.keyboards.payloads import (
     CMD_MY_TICKETS,
@@ -320,63 +329,144 @@ def register_user_ticket_handlers(bot: Bot) -> None:
         """Обрабатывает callback-кнопки пользовательского раздела тикетов."""
 
         payload: dict[str, Any] = event.get_payload_json() or {}
-        command = payload.get("cmd")
+        command, started_at = start_callback_trace("user_tickets", event, payload)
         if command not in {CMD_MY_TICKETS, CMD_USER_TICKETS_PAGE, CMD_USER_TICKET, CMD_USER_REPLY}:
-            return
-
-        await event.send_empty_answer()
-        user_id = int(event.user_id)
-        logger.debug(
-            "user_tickets callback (user_id={}, peer_id={}, cmd={}, payload={})",
-            user_id,
-            int(event.peer_id),
-            command,
-            payload,
-        )
-
-        if command == CMD_MY_TICKETS:
-            await _show_user_tickets_page_event(event, page=1)
-            return
-
-        if command == CMD_USER_TICKETS_PAGE:
-            try:
-                page = max(int(payload.get("page", 1)), 1)
-            except (TypeError, ValueError):
-                page = 1
-            await _show_user_tickets_page_event(event, page=page)
-            return
-
-        if command == CMD_USER_TICKET:
-            try:
-                ticket_id = int(payload.get("ticket_id"))
-            except (TypeError, ValueError):
-                await edit_or_send_event_message(event, "⚠️ Не удалось определить тикет.")
-                return
-            await _show_user_ticket_details_event(event, ticket_id=ticket_id)
-            return
-
-        if command == CMD_USER_REPLY:
-            try:
-                ticket_id = int(payload.get("ticket_id"))
-            except (TypeError, ValueError):
-                await edit_or_send_event_message(event, "⚠️ Не удалось определить тикет.")
-                return
-
-            ticket = await ticket_service.get_ticket(ticket_id)
-            if not ticket or ticket.user_id != user_id:
-                await edit_or_send_event_message(event, "❌ Тикет не найден или доступ запрещён.")
-                return
-            if ticket.status == "closed":
-                await edit_or_send_event_message(event, "🔒 Тикет уже закрыт. Отправка нового ответа невозможна.")
-                return
-
-            await bot.state_dispenser.set(
-                user_id,
-                TicketState.WAITING_FOR_USER_REPLY,
-                ticket_id=ticket_id,
-            )
-            await edit_or_send_event_message(
+            mark_callback_skipped(
+                "user_tickets",
                 event,
-                f"✍️ Введите ответ для тикета #{ticket_id}.",
-                keyboard=get_user_ticket_details_keyboard(ticket_id, ticket.status),
+                reason="unsupported_cmd",
+                command=command,
             )
+            return
+
+        try:
+            await event.send_empty_answer()
+            mark_callback_matched("user_tickets", event, command=command)
+
+            user_id = int(event.user_id)
+            logger.debug(
+                "user_tickets callback (user_id={}, peer_id={}, cmd={}, payload={})",
+                user_id,
+                int(event.peer_id),
+                command,
+                payload,
+            )
+
+            if command == CMD_MY_TICKETS:
+                await _show_user_tickets_page_event(event, page=1)
+                finish_callback_trace(
+                    "user_tickets",
+                    event,
+                    started_at=started_at,
+                    action="show_tickets_page_1",
+                    command=command,
+                )
+                return
+
+            if command == CMD_USER_TICKETS_PAGE:
+                try:
+                    page = max(int(payload.get("page", 1)), 1)
+                except (TypeError, ValueError):
+                    page = 1
+                await _show_user_tickets_page_event(event, page=page)
+                finish_callback_trace(
+                    "user_tickets",
+                    event,
+                    started_at=started_at,
+                    action=f"show_tickets_page_{page}",
+                    command=command,
+                )
+                return
+
+            if command == CMD_USER_TICKET:
+                try:
+                    ticket_id = int(payload.get("ticket_id"))
+                except (TypeError, ValueError):
+                    await edit_or_send_event_message(event, "⚠️ Не удалось определить тикет.")
+                    finish_callback_trace(
+                        "user_tickets",
+                        event,
+                        started_at=started_at,
+                        action="ticket_parse_error",
+                        command=command,
+                    )
+                    return
+                await _show_user_ticket_details_event(event, ticket_id=ticket_id)
+                finish_callback_trace(
+                    "user_tickets",
+                    event,
+                    started_at=started_at,
+                    action=f"show_ticket_{ticket_id}",
+                    command=command,
+                )
+                return
+
+            if command == CMD_USER_REPLY:
+                try:
+                    ticket_id = int(payload.get("ticket_id"))
+                except (TypeError, ValueError):
+                    await edit_or_send_event_message(event, "⚠️ Не удалось определить тикет.")
+                    finish_callback_trace(
+                        "user_tickets",
+                        event,
+                        started_at=started_at,
+                        action="reply_parse_error",
+                        command=command,
+                    )
+                    return
+
+                ticket = await ticket_service.get_ticket(ticket_id)
+                if not ticket or ticket.user_id != user_id:
+                    await edit_or_send_event_message(event, "❌ Тикет не найден или доступ запрещён.")
+                    finish_callback_trace(
+                        "user_tickets",
+                        event,
+                        started_at=started_at,
+                        action=f"reply_access_denied_{ticket_id}",
+                        command=command,
+                    )
+                    return
+                if ticket.status == "closed":
+                    await edit_or_send_event_message(event, "🔒 Тикет уже закрыт. Отправка нового ответа невозможна.")
+                    finish_callback_trace(
+                        "user_tickets",
+                        event,
+                        started_at=started_at,
+                        action=f"reply_closed_ticket_{ticket_id}",
+                        command=command,
+                    )
+                    return
+
+                await bot.state_dispenser.set(
+                    user_id,
+                    TicketState.WAITING_FOR_USER_REPLY,
+                    ticket_id=ticket_id,
+                )
+                await edit_or_send_event_message(
+                    event,
+                    f"✍️ Введите ответ для тикета #{ticket_id}.",
+                    keyboard=get_user_ticket_details_keyboard(ticket_id, ticket.status),
+                )
+                finish_callback_trace(
+                    "user_tickets",
+                    event,
+                    started_at=started_at,
+                    action=f"start_reply_{ticket_id}",
+                    command=command,
+                )
+                return
+
+            mark_callback_skipped(
+                "user_tickets",
+                event,
+                reason="no_branch_after_match",
+                command=command,
+            )
+        except Exception:
+            fail_callback_trace(
+                "user_tickets",
+                event,
+                started_at=started_at,
+                command=command,
+            )
+            raise

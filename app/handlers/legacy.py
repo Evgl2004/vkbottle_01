@@ -10,7 +10,13 @@ from vkbottle.bot import Bot, Message, MessageEvent
 from vkbottle_types.events import GroupEventType
 
 from app.database import db
-from app.handlers.common import EventMessageAdapter, edit_or_send_event_message
+from app.handlers.common import (
+    EventMessageAdapter,
+    edit_or_send_event_message,
+    mark_callback_matched,
+    mark_callback_skipped,
+    start_callback_trace,
+)
 from app.handlers.menu import show_main_menu
 from app.keyboards.registration import (
     get_edit_choice_keyboard,
@@ -479,7 +485,15 @@ def register_legacy_handlers(bot: Bot) -> None:
         """
 
         payload: dict[str, Any] = event.get_payload_json() or {}
-        command = payload.get("cmd")
+        user_id = int(event.user_id)
+        state_peer = await bot.state_dispenser.get(user_id)
+        state_value = state_peer.state if state_peer else None
+        command, _started_at = start_callback_trace(
+            "legacy",
+            event,
+            payload,
+            state=state_value,
+        )
         if command not in {
             CMD_ACCEPT_RULES,
             CMD_GENDER_MALE,
@@ -496,11 +510,15 @@ def register_legacy_handlers(bot: Bot) -> None:
             CMD_NOTIFY_NO,
             CMD_RETRY_IIKO,
         }:
+            mark_callback_skipped(
+                "legacy",
+                event,
+                reason="unsupported_cmd",
+                command=command,
+                state=state_value,
+            )
             return
 
-        user_id = int(event.user_id)
-        state_peer = await bot.state_dispenser.get(user_id)
-        state_value = state_peer.state if state_peer else None
         adapter = EventMessageAdapter(event)
 
         def in_state(state: LegacyState) -> bool:
@@ -508,6 +526,7 @@ def register_legacy_handlers(bot: Bot) -> None:
 
         if command == CMD_ACCEPT_RULES and in_state(LegacyState.WAITING_FOR_RULES_CONSENT):
             await event.send_empty_answer()
+            mark_callback_matched("legacy", event, command=command, state=state_value)
             logger.info("Legacy callback: пользователь принял правила (user_id={})", user_id)
             await db.update_user(
                 user_id,
@@ -522,9 +541,17 @@ def register_legacy_handlers(bot: Bot) -> None:
         if command in {CMD_GENDER_MALE, CMD_GENDER_FEMALE} and in_state(LegacyState.WAITING_FOR_FIELD):
             missing = list(state_peer.payload.get("missing_fields", [])) if state_peer else []
             if not missing or missing[0] != "gender":
+                mark_callback_skipped(
+                    "legacy",
+                    event,
+                    reason="waiting_for_field_not_gender",
+                    command=command,
+                    state=state_value,
+                )
                 return
 
             await event.send_empty_answer()
+            mark_callback_matched("legacy", event, command=command, state=state_value)
             gender = "male" if command == CMD_GENDER_MALE else "female"
             await db.update_user(user_id, gender=gender)
             logger.info("Legacy callback: сохранён пол (user_id={}, gender={})", user_id, gender)
@@ -534,6 +561,7 @@ def register_legacy_handlers(bot: Bot) -> None:
 
         if command == CMD_REVIEW_OK and in_state(LegacyState.WAITING_FOR_REVIEW):
             await event.send_empty_answer()
+            mark_callback_matched("legacy", event, command=command, state=state_value)
             logger.info("Legacy callback: анкета подтверждена (user_id={})", user_id)
             await bot.state_dispenser.set(user_id, LegacyState.WAITING_FOR_NOTIFICATIONS_CONSENT)
             await edit_or_send_event_message(
@@ -545,6 +573,7 @@ def register_legacy_handlers(bot: Bot) -> None:
 
         if command == CMD_REVIEW_EDIT and in_state(LegacyState.WAITING_FOR_REVIEW):
             await event.send_empty_answer()
+            mark_callback_matched("legacy", event, command=command, state=state_value)
             logger.info("Legacy callback: открыт выбор поля редактирования (user_id={})", user_id)
             await bot.state_dispenser.set(user_id, LegacyState.WAITING_FOR_EDIT_CHOICE)
             await edit_or_send_event_message(
@@ -563,6 +592,7 @@ def register_legacy_handlers(bot: Bot) -> None:
             CMD_EDIT_CANCEL,
         }:
             await event.send_empty_answer()
+            mark_callback_matched("legacy", event, command=command, state=state_value)
             logger.debug("Legacy callback: выбор поля редактирования (user_id={}, cmd={})", user_id, command)
             if command == CMD_EDIT_CANCEL:
                 await bot.state_dispenser.set(user_id, LegacyState.WAITING_FOR_REVIEW)
@@ -580,6 +610,13 @@ def register_legacy_handlers(bot: Bot) -> None:
                 CMD_EDIT_BIRTH_DATE,
                 CMD_EDIT_EMAIL,
             }:
+                mark_callback_skipped(
+                    "legacy",
+                    event,
+                    reason="unsupported_edit_cmd",
+                    command=command,
+                    state=state_value,
+                )
                 return
 
             await bot.state_dispenser.set(
@@ -606,9 +643,17 @@ def register_legacy_handlers(bot: Bot) -> None:
         if command in {CMD_GENDER_MALE, CMD_GENDER_FEMALE} and in_state(LegacyState.WAITING_FOR_EDIT_FIELD):
             edit_field = state_peer.payload.get("edit_field") if state_peer else None
             if edit_field != CMD_EDIT_GENDER:
+                mark_callback_skipped(
+                    "legacy",
+                    event,
+                    reason="edit_field_mismatch",
+                    command=command,
+                    state=state_value,
+                )
                 return
 
             await event.send_empty_answer()
+            mark_callback_matched("legacy", event, command=command, state=state_value)
             gender = "male" if command == CMD_GENDER_MALE else "female"
             await db.update_user(user_id, gender=gender)
             logger.info("Legacy callback: обновлён пол в редактировании (user_id={}, gender={})", user_id, gender)
@@ -622,6 +667,7 @@ def register_legacy_handlers(bot: Bot) -> None:
 
         if command in {CMD_NOTIFY_YES, CMD_NOTIFY_NO} and in_state(LegacyState.WAITING_FOR_NOTIFICATIONS_CONSENT):
             await event.send_empty_answer()
+            mark_callback_matched("legacy", event, command=command, state=state_value)
             allowed = command == CMD_NOTIFY_YES
             logger.info(
                 "Legacy callback: выбор уведомлений (user_id={}, notifications_allowed={})",
@@ -641,5 +687,15 @@ def register_legacy_handlers(bot: Bot) -> None:
 
         if command == CMD_RETRY_IIKO and in_state(LegacyState.WAITING_FOR_IIKO_REGISTRATION):
             await event.send_empty_answer()
+            mark_callback_matched("legacy", event, command=command, state=state_value)
             logger.info("Legacy callback: повторный запуск iiko-синхронизации (user_id={})", user_id)
             await _run_iiko_sync(adapter, bot)
+            return
+
+        mark_callback_skipped(
+            "legacy",
+            event,
+            reason="state_mismatch_or_unhandled",
+            command=command,
+            state=state_value,
+        )
