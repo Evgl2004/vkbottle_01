@@ -112,18 +112,12 @@ async def _run_iiko_sync(message: Message, bot: Bot) -> None:
         len(result.card_numbers),
     )
 
-    card_text = (
-        "\n".join(f"- {number}" for number in result.card_numbers)
-        if result.card_numbers
-        else "Карты не найдены."
-    )
     await message.answer(
         "\n".join(
             [
                 "✅ Регистрация успешно завершена.",
                 result.message,
-                "🪪 Ваши карты:",
-                card_text,
+                "🪪 Сейчас отправлю QR-коды ваших карт.",
             ]
         )
     )

@@ -194,15 +194,17 @@ async def send_card_qr(
             )
             return False
 
+        # По UX-требованию подпись отправляется отдельным сообщением,
+        # а само изображение QR уходит без caption для максимальной площади отображения.
         await message.answer(
             "\n".join(
                 [
                     title,
                     f"Номер карты: {card_number}",
                 ]
-            ),
-            attachment=attachment,
+            )
         )
+        await message.answer(attachment=attachment)
 
         logger.info(
             "QR-код карты отправлен успешно (user_id={}, peer_id={}, card={})",

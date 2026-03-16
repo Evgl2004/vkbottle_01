@@ -239,9 +239,8 @@ def register_menu_handlers(bot: Bot) -> None:
             )
             return
 
-        card_lines = [f"- {card.get('number', 'неизвестный номер')}" for card in cards]
         await message.answer(
-            "🪪 Ваши виртуальные карты:\n" + "\n".join(card_lines),
+            "🪪 Отправляю QR-коды ваших виртуальных карт.",
             keyboard=get_back_to_main_keyboard(),
         )
 
