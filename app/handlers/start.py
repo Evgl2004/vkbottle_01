@@ -11,6 +11,8 @@ from app.handlers.menu import show_main_menu
 from app.keyboards.registration import get_rules_keyboard
 from app.states.registration import RegistrationState
 
+_START_TEXT_VARIANTS = {"/start", "start", "начать"}
+
 
 async def _handle_start_logic(message: Message, bot: Bot) -> None:
     """Единая логика обработки команды `/start`.
@@ -87,3 +89,53 @@ def register_start_handlers(bot: Bot) -> None:
                 ]
             )
         )
+
+    @bot.on.private_message(blocking=False)
+    async def first_contact_autostart_handler(message: Message) -> None:
+        """Автоматически запускает онбординг при первом некомандном сообщении.
+
+        Проблема, которую закрывает обработчик:
+        - в части VK-клиентов пользователь не всегда видит кнопку «Начать»;
+        - в итоге создаётся «тихий» первый экран без явной точки входа.
+
+        Решение:
+        1. Если пользователь ещё не зарегистрирован и у него нет активного FSM-состояния,
+           запускаем сценарий `/start` автоматически.
+        2. Перед автозапуском даём короткую подсказку, что также работают
+           команды `/start` и слово «Начать».
+
+        Защитные условия:
+        - не вмешиваемся в активные сценарии (когда состояние уже выставлено);
+        - не перехватываем другие slash-команды (`/mod`, `/help` и т.д.);
+        - не дублируем поведение явной команды `/start`.
+        """
+
+        user_id = int(message.from_id)
+        text = (message.text or "").strip()
+        normalized_text = text.lower()
+        payload = message.get_payload_json() or {}
+
+        if normalized_text in _START_TEXT_VARIANTS or payload.get("command") == "start":
+            return
+        if normalized_text.startswith("/"):
+            return
+
+        state_peer = await bot.state_dispenser.get(user_id)
+        if state_peer:
+            return
+
+        user = await db.get_user(user_id)
+        if user and user.is_registered and user.rules_accepted and not user.is_legacy:
+            return
+
+        logger.info(
+            "Автозапуск start-сценария по первому контакту (user_id={}, peer_id={}, text='{}')",
+            user_id,
+            message.peer_id,
+            text,
+        )
+        await message.answer(
+            "👋 Похоже, кнопка «Начать» недоступна в текущем клиенте VK.\n"
+            "Запускаю регистрацию автоматически. Также можно использовать /start или «Начать»."
+        )
+        await _handle_start_logic(message, bot)

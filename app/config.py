@@ -71,6 +71,7 @@ class Settings(BaseSettings):
     # ----------------------------
     env: str = Field("development", alias="ENV")
     log_level: str = Field("INFO", alias="LOG_LEVEL")
+    log_super_verbose: bool = Field(False, alias="LOG_SUPER_VERBOSE")
 
     # ----------------------------
     # iiko

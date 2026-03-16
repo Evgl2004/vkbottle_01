@@ -108,6 +108,55 @@ async def edit_or_send_event_message(
     await event.send_message(message=text, keyboard=keyboard)
 
 
+async def delete_event_message(
+    event: MessageEvent,
+    *,
+    conversation_message_id: int | None = None,
+) -> bool:
+    """Удаляет сообщение по `conversation_message_id` в текущем диалоге.
+
+    Важно для UX callback-кнопок:
+    - позволяет убрать старое сообщение-меню перед выводом новой версии ниже;
+    - снижает визуальные дубли кнопок в переписке.
+
+    Возвращает:
+    - `True`, если удаление подтверждено API;
+    - `False`, если ID отсутствует или удаление недоступно.
+    """
+
+    target_cmid = conversation_message_id
+    if target_cmid is None:
+        target_cmid = event.conversation_message_id
+
+    if target_cmid is None:
+        logger.debug(
+            "delete_event_message: пропуск удаления, отсутствует conversation_message_id (peer_id={})",
+            int(event.peer_id),
+        )
+        return False
+
+    try:
+        await event.ctx_api.messages.delete(
+            peer_id=int(event.peer_id),
+            cmids=[int(target_cmid)],
+            delete_for_all=1,
+        )
+        logger.debug(
+            "delete_event_message: сообщение удалено (peer_id={}, cmid={})",
+            int(event.peer_id),
+            int(target_cmid),
+        )
+        return True
+    except Exception as error:
+        logger.debug(
+            "delete_event_message: не удалось удалить сообщение (peer_id={}, cmid={}, error={})",
+            int(event.peer_id),
+            int(target_cmid),
+            error,
+        )
+        return False
+
+
 def _extract_event_trace_id(event: MessageEvent) -> str:
     """Возвращает наиболее полезный trace-id callback-события."""
 
@@ -200,6 +249,15 @@ def mark_callback_skipped(
 
     trace_id = _extract_event_trace_id(event)
     _callback_router_stats[router]["skipped"] += 1
+
+    # Самый частый штатный случай — роутер получил чужую команду и
+    # корректно её пропустил (`unsupported_cmd`). В обычном DEBUG это
+    # создаёт большой шум, поэтому подробную запись оставляем только
+    # в супер-подробном режиме.
+    if reason == "unsupported_cmd" and not settings.log_super_verbose:
+        _log_callback_stats_if_needed(router)
+        return
+
     logger.debug(
         "CALLBACK_TRACE SKIP router={} trace_id={} reason={} cmd={} state={}",
         router,

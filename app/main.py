@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import sys
+from typing import Any
 
 # Переменную важно выставить до импорта vkbottle,
 # чтобы избежать проблем с loguru enqueue в отдельных окружениях.
@@ -25,12 +26,36 @@ from app.services import prepare_runtime, shutdown_infrastructure
 from app.services.state_dispenser import RedisStateDispenser
 
 
+def _log_filter(record: dict[str, Any]) -> bool:
+    """Фильтрует шумные DEBUG-логи.
+
+    Режимы:
+    1. `LOG_SUPER_VERBOSE=true`:
+       - пропускаем все логи без ограничений;
+       - удобно для глубоких аварийных расследований.
+    2. Обычный `DEBUG`:
+       - оставляем отладку прикладного кода (`app.*`);
+       - скрываем низкоуровневый поток `vkbottle.*`, который в тестовом режиме
+         формирует большой объём малополезных записей.
+    """
+
+    if settings.log_super_verbose:
+        return True
+
+    if record["level"].name != "DEBUG":
+        return True
+
+    logger_name = str(record.get("name") or "")
+    return not logger_name.startswith("vkbottle.")
+
+
 def configure_logging() -> None:
     """Настраивает единый формат логирования процесса."""
     logger.remove()
     logger.add(
         sys.stdout,
         level=settings.log_level,
+        filter=_log_filter,
         format="{time:YYYY-MM-DD HH:mm:ss} | {level:<8} | {name}:{function}:{line} - {message}",
         colorize=False,
     )
@@ -54,9 +79,10 @@ def main() -> None:
     configure_logging()
     logger.info("Запуск VK-бота")
     logger.info(
-        "Конфигурация запуска: env={}, log_level={}, group_id={}, admins_count={}",
+        "Конфигурация запуска: env={}, log_level={}, log_super_verbose={}, group_id={}, admins_count={}",
         settings.env,
         settings.log_level,
+        settings.log_super_verbose,
         settings.vk_group_id,
         len(settings.admin_user_ids),
     )

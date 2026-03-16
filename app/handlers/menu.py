@@ -18,6 +18,7 @@ from vkbottle_types.events import GroupEventType
 from app.database import db
 from app.handlers.common import (
     EventMessageAdapter,
+    delete_event_message,
     edit_or_send_event_message,
     fail_callback_trace,
     finish_callback_trace,
@@ -122,17 +123,38 @@ async def _show_support_menu_event(event: MessageEvent) -> None:
     )
 
 
+async def _send_fresh_main_menu_after_qr(event: MessageEvent) -> None:
+    """Отправляет новое сообщение главного меню после выдачи QR-кодов.
+
+    Зачем нужен отдельный helper:
+    - после серии QR-сообщений важно вернуть меню «вниз» переписки;
+    - меню отправляется новой репликой, а не редактированием старой,
+      чтобы пользователь видел актуальные кнопки в последнем сообщении.
+    """
+
+    user = await db.get_user(int(event.user_id))
+    user_name = (user.first_name_input if user else None) or "Гость"
+    await event.send_message(
+        message=f"👋 Здравствуйте, {user_name}!\nВы в главном меню. Выберите раздел:",
+        keyboard=get_main_menu_keyboard(),
+    )
+
+
 async def _show_virtual_cards_for_actor(
     actor: Any,
     user_id: int,
     *,
     send_intro: bool = True,
-) -> None:
+) -> bool:
     """Показывает виртуальные карты и отправляет QR-коды для `Message`/`MessageEvent`.
 
     `actor` должен поддерживать контракт:
     - `answer(...)`;
     - поля `from_id`, `peer_id`, `ctx_api`.
+
+    Возвращает:
+    - `True`, если хотя бы один QR-код отправлен;
+    - `False`, если отправка не состоялась или завершилась ошибкой.
     """
 
     logger.debug("Запрошен раздел виртуальных карт (user_id={})", user_id)
@@ -147,7 +169,7 @@ async def _show_virtual_cards_for_actor(
             "❌ Телефон пользователя не найден. Пройдите регистрацию через /start.",
             keyboard=get_back_to_main_keyboard(),
         )
-        return
+        return False
 
     info = await iiko_service.get_customer_info(user.phone_number)
     if info is None:
@@ -166,7 +188,7 @@ async def _show_virtual_cards_for_actor(
                 f"❌ Не удалось зарегистрировать клиента в iiko.\nПричина: {msg}",
                 keyboard=get_back_to_main_keyboard(),
             )
-            return
+            return False
         info = {"customer_id": customer_id, "cards": []}
 
     cards = info.get("cards", []) or []
@@ -192,7 +214,7 @@ async def _show_virtual_cards_for_actor(
                 f"❌ Не удалось выпустить карту.\nПричина: {msg}",
                 keyboard=get_back_to_main_keyboard(),
             )
-            return
+            return False
         cards = [{"number": card_number}] if card_number else []
         logger.debug(
             "Выпуск карты завершён (user_id={}, cards_count_after_issue={})",
@@ -206,7 +228,7 @@ async def _show_virtual_cards_for_actor(
             "⚠️ Карты не найдены. Обратитесь к администратору.",
             keyboard=get_back_to_main_keyboard(),
         )
-        return
+        return False
 
     if send_intro:
         await actor.answer(
@@ -239,6 +261,9 @@ async def _show_virtual_cards_for_actor(
             "❌ Не удалось сформировать QR-код карты. Попробуйте позже или обратитесь в поддержку.",
             keyboard=get_back_to_main_keyboard(),
         )
+        return False
+
+    return True
 
 
 def register_menu_handlers(bot: Bot) -> None:
@@ -341,8 +366,7 @@ def register_menu_handlers(bot: Bot) -> None:
         1. Пытаемся получить клиента/карты из iiko.
         2. Если клиента нет — регистрируем.
         3. Если карт нет — выпускаем новую.
-        4. Отправляем список карт текстом.
-        5. Отправляем QR-картинку для каждой найденной карты.
+        4. Отправляем QR-картинку для каждой найденной карты.
         """
 
         await _show_virtual_cards_for_actor(message, int(message.from_id), send_intro=True)
@@ -525,21 +549,32 @@ def register_menu_handlers(bot: Bot) -> None:
                 return
 
             if command == CMD_VIRTUAL_CARD:
+                source_cmid = event.conversation_message_id
                 await edit_or_send_event_message(
                     event,
                     "🪪 Загружаю виртуальные карты и формирую QR-коды...",
                     keyboard=get_back_to_main_keyboard(),
                 )
-                await _show_virtual_cards_for_actor(
+                qr_sent = await _show_virtual_cards_for_actor(
                     EventMessageAdapter(event),
                     int(event.user_id),
                     send_intro=False,
                 )
+                if qr_sent:
+                    removed = await delete_event_message(event, conversation_message_id=source_cmid)
+                    if not removed:
+                        logger.debug(
+                            "Не удалось удалить исходное меню после QR, продолжаем без удаления (user_id={}, peer_id={}, cmid={})",
+                            int(event.user_id),
+                            int(event.peer_id),
+                            source_cmid,
+                        )
+                    await _send_fresh_main_menu_after_qr(event)
                 finish_callback_trace(
                     "menu",
                     event,
                     started_at=started_at,
-                    action="show_virtual_card",
+                    action="show_virtual_card_and_refresh_menu" if qr_sent else "show_virtual_card",
                     command=command,
                 )
                 return
