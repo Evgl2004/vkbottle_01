@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import List
+from typing import Any, List
 
 from loguru import logger
-from vkbottle.bot import Bot, Message
+from vkbottle.bot import Bot, Message, MessageEvent
+from vkbottle_types.events import GroupEventType
 
 from app.database import db
+from app.handlers.common import EventMessageAdapter, edit_or_send_event_message
 from app.handlers.menu import show_main_menu
 from app.keyboards.registration import (
     get_edit_choice_keyboard,
@@ -467,3 +469,177 @@ def register_legacy_handlers(bot: Bot) -> None:
         """Повторный запуск iiko-синхронизации в legacy-потоке."""
         logger.info("Legacy: повторный запуск iiko-синхронизации (user_id={})", int(message.from_id))
         await _run_iiko_sync(message, bot)
+
+    @bot.on.raw_event(GroupEventType.MESSAGE_EVENT, dataclass=MessageEvent)
+    async def legacy_callback_router(event: MessageEvent) -> None:
+        """Обрабатывает callback-кнопки legacy-апгрейда.
+
+        Команды пересекаются с регистрацией, поэтому обработка запускается
+        только в релевантных `LegacyState`.
+        """
+
+        payload: dict[str, Any] = event.get_payload_json() or {}
+        command = payload.get("cmd")
+        if command not in {
+            CMD_ACCEPT_RULES,
+            CMD_GENDER_MALE,
+            CMD_GENDER_FEMALE,
+            CMD_REVIEW_OK,
+            CMD_REVIEW_EDIT,
+            CMD_EDIT_FIRST_NAME,
+            CMD_EDIT_LAST_NAME,
+            CMD_EDIT_GENDER,
+            CMD_EDIT_BIRTH_DATE,
+            CMD_EDIT_EMAIL,
+            CMD_EDIT_CANCEL,
+            CMD_NOTIFY_YES,
+            CMD_NOTIFY_NO,
+            CMD_RETRY_IIKO,
+        }:
+            return
+
+        user_id = int(event.user_id)
+        state_peer = await bot.state_dispenser.get(user_id)
+        state_value = state_peer.state if state_peer else None
+        adapter = EventMessageAdapter(event)
+
+        def in_state(state: LegacyState) -> bool:
+            return state_value == str(state)
+
+        if command == CMD_ACCEPT_RULES and in_state(LegacyState.WAITING_FOR_RULES_CONSENT):
+            await event.send_empty_answer()
+            logger.info("Legacy callback: пользователь принял правила (user_id={})", user_id)
+            await db.update_user(
+                user_id,
+                rules_accepted=True,
+                rules_accepted_at=datetime.now(timezone.utc),
+            )
+            user = await db.get_user(user_id)
+            missing = await _get_missing_fields(user)
+            await _ask_next_field(adapter, bot, missing)
+            return
+
+        if command in {CMD_GENDER_MALE, CMD_GENDER_FEMALE} and in_state(LegacyState.WAITING_FOR_FIELD):
+            missing = list(state_peer.payload.get("missing_fields", [])) if state_peer else []
+            if not missing or missing[0] != "gender":
+                return
+
+            await event.send_empty_answer()
+            gender = "male" if command == CMD_GENDER_MALE else "female"
+            await db.update_user(user_id, gender=gender)
+            logger.info("Legacy callback: сохранён пол (user_id={}, gender={})", user_id, gender)
+            missing.pop(0)
+            await _ask_next_field(adapter, bot, missing)
+            return
+
+        if command == CMD_REVIEW_OK and in_state(LegacyState.WAITING_FOR_REVIEW):
+            await event.send_empty_answer()
+            logger.info("Legacy callback: анкета подтверждена (user_id={})", user_id)
+            await bot.state_dispenser.set(user_id, LegacyState.WAITING_FOR_NOTIFICATIONS_CONSENT)
+            await edit_or_send_event_message(
+                event,
+                "📢 Выберите вариант согласия на уведомления:",
+                keyboard=get_notifications_keyboard(),
+            )
+            return
+
+        if command == CMD_REVIEW_EDIT and in_state(LegacyState.WAITING_FOR_REVIEW):
+            await event.send_empty_answer()
+            logger.info("Legacy callback: открыт выбор поля редактирования (user_id={})", user_id)
+            await bot.state_dispenser.set(user_id, LegacyState.WAITING_FOR_EDIT_CHOICE)
+            await edit_or_send_event_message(
+                event,
+                "✏️ Выберите поле для редактирования:",
+                keyboard=get_edit_choice_keyboard(),
+            )
+            return
+
+        if in_state(LegacyState.WAITING_FOR_EDIT_CHOICE) and command in {
+            CMD_EDIT_FIRST_NAME,
+            CMD_EDIT_LAST_NAME,
+            CMD_EDIT_GENDER,
+            CMD_EDIT_BIRTH_DATE,
+            CMD_EDIT_EMAIL,
+            CMD_EDIT_CANCEL,
+        }:
+            await event.send_empty_answer()
+            logger.debug("Legacy callback: выбор поля редактирования (user_id={}, cmd={})", user_id, command)
+            if command == CMD_EDIT_CANCEL:
+                await bot.state_dispenser.set(user_id, LegacyState.WAITING_FOR_REVIEW)
+                await edit_or_send_event_message(
+                    event,
+                    await get_profile_review_text(user_id),
+                    keyboard=get_review_keyboard(),
+                )
+                return
+
+            if command not in {
+                CMD_EDIT_FIRST_NAME,
+                CMD_EDIT_LAST_NAME,
+                CMD_EDIT_GENDER,
+                CMD_EDIT_BIRTH_DATE,
+                CMD_EDIT_EMAIL,
+            }:
+                return
+
+            await bot.state_dispenser.set(
+                user_id,
+                LegacyState.WAITING_FOR_EDIT_FIELD,
+                edit_field=command,
+            )
+            if command == CMD_EDIT_GENDER:
+                await edit_or_send_event_message(event, "⚥ Выберите новый пол.", keyboard=get_gender_keyboard())
+                return
+            if command == CMD_EDIT_FIRST_NAME:
+                await edit_or_send_event_message(event, "👤 Введите новое имя.")
+                return
+            if command == CMD_EDIT_LAST_NAME:
+                await edit_or_send_event_message(event, "👥 Введите новую фамилию.")
+                return
+            if command == CMD_EDIT_BIRTH_DATE:
+                await edit_or_send_event_message(event, "🎂 Введите новую дату рождения в формате ДД.ММ.ГГГГ.")
+                return
+            if command == CMD_EDIT_EMAIL:
+                await edit_or_send_event_message(event, "📧 Введите новый email.")
+                return
+
+        if command in {CMD_GENDER_MALE, CMD_GENDER_FEMALE} and in_state(LegacyState.WAITING_FOR_EDIT_FIELD):
+            edit_field = state_peer.payload.get("edit_field") if state_peer else None
+            if edit_field != CMD_EDIT_GENDER:
+                return
+
+            await event.send_empty_answer()
+            gender = "male" if command == CMD_GENDER_MALE else "female"
+            await db.update_user(user_id, gender=gender)
+            logger.info("Legacy callback: обновлён пол в редактировании (user_id={}, gender={})", user_id, gender)
+            await bot.state_dispenser.set(user_id, LegacyState.WAITING_FOR_REVIEW)
+            await edit_or_send_event_message(
+                event,
+                await get_profile_review_text(user_id),
+                keyboard=get_review_keyboard(),
+            )
+            return
+
+        if command in {CMD_NOTIFY_YES, CMD_NOTIFY_NO} and in_state(LegacyState.WAITING_FOR_NOTIFICATIONS_CONSENT):
+            await event.send_empty_answer()
+            allowed = command == CMD_NOTIFY_YES
+            logger.info(
+                "Legacy callback: выбор уведомлений (user_id={}, notifications_allowed={})",
+                user_id,
+                allowed,
+            )
+            await db.update_user(
+                user_id,
+                notifications_allowed=allowed,
+                notifications_allowed_at=datetime.now(timezone.utc),
+                is_legacy=False,
+            )
+            await bot.state_dispenser.set(user_id, LegacyState.WAITING_FOR_IIKO_REGISTRATION)
+            await edit_or_send_event_message(event, "⏳ Выполняю синхронизацию профиля с iiko...")
+            await _run_iiko_sync(adapter, bot)
+            return
+
+        if command == CMD_RETRY_IIKO and in_state(LegacyState.WAITING_FOR_IIKO_REGISTRATION):
+            await event.send_empty_answer()
+            logger.info("Legacy callback: повторный запуск iiko-синхронизации (user_id={})", user_id)
+            await _run_iiko_sync(adapter, bot)

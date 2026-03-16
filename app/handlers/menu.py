@@ -16,6 +16,7 @@ from vkbottle.bot import Bot, Message, MessageEvent
 from vkbottle_types.events import GroupEventType
 
 from app.database import db
+from app.handlers.common import EventMessageAdapter, edit_or_send_event_message
 from app.keyboards.menu import (
     get_back_to_main_keyboard,
     get_back_to_support_keyboard,
@@ -64,41 +65,13 @@ async def show_support_menu(message: Message) -> None:
     )
 
 
-async def _edit_or_send_event_message(
-    event: MessageEvent,
-    text: str,
-    *,
-    keyboard: str | None = None,
-) -> None:
-    """Пытается отредактировать текущее сообщение меню, иначе отправляет новое.
-
-    Поведение приближает UX к Telegram-референсу:
-    - при нажатии inline callback происходит перерисовка существующего меню;
-    - если редактирование недоступно (например, нет `conversation_message_id`),
-      выполняется безопасный fallback на обычную отправку сообщения.
-    """
-
-    try:
-        if event.conversation_message_id is not None:
-            await event.edit_message(message=text, keyboard=keyboard)
-            return
-    except Exception as error:
-        logger.debug(
-            "Не удалось отредактировать сообщение по message_event, fallback на send_message (peer_id={}, error={})",
-            event.peer_id,
-            error,
-        )
-
-    await event.send_message(message=text, keyboard=keyboard)
-
-
 async def _show_main_menu_event(event: MessageEvent) -> None:
     """Показывает/перерисовывает главное меню в callback-режиме."""
 
     user_id = int(event.user_id)
     user = await db.get_user(user_id)
     if not user:
-        await _edit_or_send_event_message(
+        await edit_or_send_event_message(
             event,
             "❌ Профиль не найден. Введите /start для повторной инициализации.",
             keyboard=get_back_to_main_keyboard(),
@@ -106,14 +79,14 @@ async def _show_main_menu_event(event: MessageEvent) -> None:
         return
 
     if user.is_legacy or not user.rules_accepted or not user.is_registered:
-        await _edit_or_send_event_message(
+        await edit_or_send_event_message(
             event,
             "⚠️ Чтобы открыть главное меню, сначала завершите регистрацию через /start.",
             keyboard=get_back_to_main_keyboard(),
         )
         return
 
-    await _edit_or_send_event_message(
+    await edit_or_send_event_message(
         event,
         f"👋 Здравствуйте, {user.first_name_input or 'Гость'}!\nВы в главном меню. Выберите раздел:",
         keyboard=get_main_menu_keyboard(),
@@ -126,7 +99,7 @@ async def _show_support_menu_event(event: MessageEvent) -> None:
     user_id = int(event.user_id)
     user = await db.get_user(user_id)
     if not user or user.is_legacy or not user.rules_accepted or not user.is_registered:
-        await _edit_or_send_event_message(
+        await edit_or_send_event_message(
             event,
             "⚠️ Раздел поддержки доступен после завершения регистрации. Введите /start.",
             keyboard=get_back_to_main_keyboard(),
@@ -134,11 +107,130 @@ async def _show_support_menu_event(event: MessageEvent) -> None:
         return
 
     count = await ticket_service.get_user_tickets_count(user_id)
-    await _edit_or_send_event_message(
+    await edit_or_send_event_message(
         event,
         "🆘 Раздел «Отдел заботы».\nВыберите действие:",
         keyboard=get_support_keyboard(has_tickets=count > 0),
     )
+
+
+async def _show_virtual_cards_for_actor(
+    actor: Any,
+    user_id: int,
+    *,
+    send_intro: bool = True,
+) -> None:
+    """Показывает виртуальные карты и отправляет QR-коды для `Message`/`MessageEvent`.
+
+    `actor` должен поддерживать контракт:
+    - `answer(...)`;
+    - поля `from_id`, `peer_id`, `ctx_api`.
+    """
+
+    logger.debug("Запрошен раздел виртуальных карт (user_id={})", user_id)
+
+    user = await db.get_user(user_id)
+    if not user or not user.phone_number:
+        logger.warning(
+            "Невозможно показать виртуальные карты: у пользователя нет телефона (user_id={})",
+            user_id,
+        )
+        await actor.answer(
+            "❌ Телефон пользователя не найден. Пройдите регистрацию через /start.",
+            keyboard=get_back_to_main_keyboard(),
+        )
+        return
+
+    info = await iiko_service.get_customer_info(user.phone_number)
+    if info is None:
+        logger.debug(
+            "Клиент не найден в iiko, запускаем регистрацию (user_id={})",
+            user_id,
+        )
+        customer_id, msg = await iiko_service.register_customer(user)
+        if not customer_id:
+            logger.error(
+                "Ошибка регистрации клиента в iiko при запросе карт (user_id={}): {}",
+                user_id,
+                msg,
+            )
+            await actor.answer(
+                f"❌ Не удалось зарегистрировать клиента в iiko.\nПричина: {msg}",
+                keyboard=get_back_to_main_keyboard(),
+            )
+            return
+        info = {"customer_id": customer_id, "cards": []}
+
+    cards = info.get("cards", []) or []
+    logger.debug(
+        "Получены данные карт из iiko (user_id={}, cards_count={})",
+        user_id,
+        len(cards),
+    )
+
+    if not cards:
+        logger.debug("Карт нет, запускаем выпуск новой карты (user_id={})", user_id)
+        ok, msg, card_number = await iiko_service.issue_card_for_customer(
+            user.phone_number,
+            info["customer_id"],
+        )
+        if not ok:
+            logger.error(
+                "Ошибка выпуска карты iiko (user_id={}): {}",
+                user_id,
+                msg,
+            )
+            await actor.answer(
+                f"❌ Не удалось выпустить карту.\nПричина: {msg}",
+                keyboard=get_back_to_main_keyboard(),
+            )
+            return
+        cards = [{"number": card_number}] if card_number else []
+        logger.debug(
+            "Выпуск карты завершён (user_id={}, cards_count_after_issue={})",
+            user_id,
+            len(cards),
+        )
+
+    if not cards:
+        logger.warning("После выпуска карта не найдена (user_id={})", user_id)
+        await actor.answer(
+            "⚠️ Карты не найдены. Обратитесь к администратору.",
+            keyboard=get_back_to_main_keyboard(),
+        )
+        return
+
+    if send_intro:
+        await actor.answer(
+            "🪪 Отправляю QR-коды ваших виртуальных карт.",
+            keyboard=get_back_to_main_keyboard(),
+        )
+
+    sent_qr_count = 0
+    for idx, card in enumerate(cards, start=1):
+        card_number = (card.get("number") or "").strip()
+        if not card_number:
+            logger.debug(
+                "Пропуск карты без номера при отправке QR (user_id={}, idx={})",
+                user_id,
+                idx,
+            )
+            continue
+
+        if await send_card_qr(actor, card_number, title=f"QR-код карты №{idx}"):
+            sent_qr_count += 1
+
+    logger.debug(
+        "Отправка QR завершена (user_id={}, sent_qr_count={}, cards_count={})",
+        user_id,
+        sent_qr_count,
+        len(cards),
+    )
+    if sent_qr_count == 0:
+        await actor.answer(
+            "❌ Не удалось сформировать QR-код карты. Попробуйте позже или обратитесь в поддержку.",
+            keyboard=get_back_to_main_keyboard(),
+        )
 
 
 def register_menu_handlers(bot: Bot) -> None:
@@ -245,110 +337,7 @@ def register_menu_handlers(bot: Bot) -> None:
         5. Отправляем QR-картинку для каждой найденной карты.
         """
 
-        user_id = int(message.from_id)
-        logger.debug("Запрошен раздел виртуальных карт (user_id={})", user_id)
-
-        user = await db.get_user(user_id)
-        if not user or not user.phone_number:
-            logger.warning(
-                "Невозможно показать виртуальные карты: у пользователя нет телефона (user_id={})",
-                user_id,
-            )
-            await message.answer(
-                "❌ Телефон пользователя не найден. Пройдите регистрацию через /start.",
-                keyboard=get_back_to_main_keyboard(),
-            )
-            return
-
-        info = await iiko_service.get_customer_info(user.phone_number)
-        if info is None:
-            logger.debug(
-                "Клиент не найден в iiko, запускаем регистрацию (user_id={})",
-                user_id,
-            )
-            customer_id, msg = await iiko_service.register_customer(user)
-            if not customer_id:
-                logger.error(
-                    "Ошибка регистрации клиента в iiko при запросе карт (user_id={}): {}",
-                    user_id,
-                    msg,
-                )
-                await message.answer(
-                    f"❌ Не удалось зарегистрировать клиента в iiko.\nПричина: {msg}",
-                    keyboard=get_back_to_main_keyboard(),
-                )
-                return
-            info = {"customer_id": customer_id, "cards": []}
-
-        cards = info.get("cards", []) or []
-        logger.debug(
-            "Получены данные карт из iiko (user_id={}, cards_count={})",
-            user_id,
-            len(cards),
-        )
-
-        if not cards:
-            logger.debug("Карт нет, запускаем выпуск новой карты (user_id={})", user_id)
-            ok, msg, card_number = await iiko_service.issue_card_for_customer(
-                user.phone_number,
-                info["customer_id"],
-            )
-            if not ok:
-                logger.error(
-                    "Ошибка выпуска карты iiko (user_id={}): {}",
-                    user_id,
-                    msg,
-                )
-                await message.answer(
-                    f"❌ Не удалось выпустить карту.\nПричина: {msg}",
-                    keyboard=get_back_to_main_keyboard(),
-                )
-                return
-            cards = [{"number": card_number}] if card_number else []
-            logger.debug(
-                "Выпуск карты завершён (user_id={}, cards_count_after_issue={})",
-                user_id,
-                len(cards),
-            )
-
-        if not cards:
-            logger.warning("После выпуска карта не найдена (user_id={})", user_id)
-            await message.answer(
-                "⚠️ Карты не найдены. Обратитесь к администратору.",
-                keyboard=get_back_to_main_keyboard(),
-            )
-            return
-
-        await message.answer(
-            "🪪 Отправляю QR-коды ваших виртуальных карт.",
-            keyboard=get_back_to_main_keyboard(),
-        )
-
-        sent_qr_count = 0
-        for idx, card in enumerate(cards, start=1):
-            card_number = (card.get("number") or "").strip()
-            if not card_number:
-                logger.debug(
-                    "Пропуск карты без номера при отправке QR (user_id={}, idx={})",
-                    user_id,
-                    idx,
-                )
-                continue
-
-            if await send_card_qr(message, card_number, title=f"QR-код карты №{idx}"):
-                sent_qr_count += 1
-
-        logger.debug(
-            "Отправка QR завершена (user_id={}, sent_qr_count={}, cards_count={})",
-            user_id,
-            sent_qr_count,
-            len(cards),
-        )
-        if sent_qr_count == 0:
-            await message.answer(
-                "❌ Не удалось сформировать QR-код карты. Попробуйте позже или обратитесь в поддержку.",
-                keyboard=get_back_to_main_keyboard(),
-            )
+        await _show_virtual_cards_for_actor(message, int(message.from_id), send_intro=True)
 
     @bot.on.private_message(payload_contains={"cmd": CMD_VACANCIES})
     async def show_vacancies(message: Message) -> None:
@@ -423,6 +412,7 @@ def register_menu_handlers(bot: Bot) -> None:
             CMD_SUPPORT,
             CMD_BACK_TO_SUPPORT,
             CMD_BALANCE,
+            CMD_VIRTUAL_CARD,
             CMD_VACANCIES,
             CMD_SUPPORT_FEEDBACK,
             CMD_SUPPORT_CONTACTS,
@@ -452,7 +442,7 @@ def register_menu_handlers(bot: Bot) -> None:
         if command == CMD_BALANCE:
             user = await db.get_user(int(event.user_id))
             if not user or not user.phone_number:
-                await _edit_or_send_event_message(
+                await edit_or_send_event_message(
                     event,
                     "❌ Номер телефона не найден. Пожалуйста, пройдите регистрацию заново через /start.",
                     keyboard=get_back_to_main_keyboard(),
@@ -461,7 +451,7 @@ def register_menu_handlers(bot: Bot) -> None:
 
             info = await iiko_service.get_customer_info(user.phone_number)
             if not info:
-                await _edit_or_send_event_message(
+                await edit_or_send_event_message(
                     event,
                     "❌ Не удалось получить баланс бонусов. Попробуйте позже.",
                     keyboard=get_back_to_main_keyboard(),
@@ -470,7 +460,7 @@ def register_menu_handlers(bot: Bot) -> None:
 
             balance = info.get("balance", 0)
             logger.info("Показан бонусный баланс через callback (user_id={}, balance={})", int(event.user_id), balance)
-            await _edit_or_send_event_message(
+            await edit_or_send_event_message(
                 event,
                 "\n".join(
                     [
@@ -483,8 +473,21 @@ def register_menu_handlers(bot: Bot) -> None:
             )
             return
 
+        if command == CMD_VIRTUAL_CARD:
+            await edit_or_send_event_message(
+                event,
+                "🪪 Загружаю виртуальные карты и формирую QR-коды...",
+                keyboard=get_back_to_main_keyboard(),
+            )
+            await _show_virtual_cards_for_actor(
+                EventMessageAdapter(event),
+                int(event.user_id),
+                send_intro=False,
+            )
+            return
+
         if command == CMD_VACANCIES:
-            await _edit_or_send_event_message(
+            await edit_or_send_event_message(
                 event,
                 "\n".join(
                     [
@@ -498,7 +501,7 @@ def register_menu_handlers(bot: Bot) -> None:
             return
 
         if command == CMD_SUPPORT_FEEDBACK:
-            await _edit_or_send_event_message(
+            await edit_or_send_event_message(
                 event,
                 "✍️ Оставить отзыв можно по кнопке ниже.",
                 keyboard=get_feedback_link_keyboard(),
@@ -506,7 +509,7 @@ def register_menu_handlers(bot: Bot) -> None:
             return
 
         if command == CMD_SUPPORT_CONTACTS:
-            await _edit_or_send_event_message(
+            await edit_or_send_event_message(
                 event,
                 "\n".join(
                     [
@@ -522,7 +525,7 @@ def register_menu_handlers(bot: Bot) -> None:
 
         if command == CMD_SUPPORT_QUESTION:
             await bot.state_dispenser.set(int(event.user_id), TicketState.WAITING_FOR_QUESTION)
-            await _edit_or_send_event_message(
+            await edit_or_send_event_message(
                 event,
                 "❓ Опишите ваш вопрос одним сообщением.\n"
                 "Модератор увидит обращение и ответит в ближайшее время.",

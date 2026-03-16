@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Dict, Iterable, Set
+from typing import Any, Dict, Iterable, Set
 
 from loguru import logger
 from vkbottle.bot import Message, MessageEvent
@@ -93,3 +93,29 @@ async def edit_or_send_event_message(
         )
 
     await event.send_message(message=text, keyboard=keyboard)
+
+
+class EventMessageAdapter:
+    """Адаптирует `MessageEvent` к интерфейсу `Message` для общих сервисов.
+
+    Зачем нужен адаптер:
+    1. В кодовой базе есть сервисы и хендлеры, которые принимают объект `Message`
+       и вызывают у него `answer(...)`, читают `from_id`, `peer_id`, `ctx_api`.
+    2. В callback-сценариях (`message_event`) мы хотим переиспользовать эти же
+       функции без дублирования бизнес-логики.
+    3. Адаптер предоставляет минимально необходимый контракт, делегируя отправку
+       сообщений в `event.send_message(...)`.
+    """
+
+    def __init__(self, event: MessageEvent) -> None:
+        """Инициализирует адаптер из исходного callback-события."""
+
+        self._event = event
+        self.from_id = int(event.user_id)
+        self.peer_id = int(event.peer_id)
+        self.ctx_api = event.ctx_api
+
+    async def answer(self, message: str | None = None, **kwargs: Any) -> None:
+        """Совместимый аналог `Message.answer(...)` для callback-контекста."""
+
+        await self._event.send_message(message=message, **kwargs)

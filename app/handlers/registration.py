@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import Any
 
 from loguru import logger
 
-from vkbottle.bot import Bot, Message
+from vkbottle.bot import Bot, Message, MessageEvent
+from vkbottle_types.events import GroupEventType
 
 from app.database import db
+from app.handlers.common import EventMessageAdapter, edit_or_send_event_message
 from app.handlers.menu import show_main_menu
 from app.keyboards.registration import (
     get_edit_choice_keyboard,
@@ -514,3 +517,162 @@ def register_registration_handlers(bot: Bot) -> None:
         """Повторно запускает iiko-синхронизацию после предыдущей ошибки."""
         logger.info("Повторный запуск iiko-синхронизации (user_id={})", int(message.from_id))
         await _run_iiko_sync(message, bot)
+
+    @bot.on.raw_event(GroupEventType.MESSAGE_EVENT, dataclass=MessageEvent)
+    async def registration_callback_router(event: MessageEvent) -> None:
+        """Обрабатывает callback-кнопки регистрационного сценария.
+
+        Важный момент:
+        - В разделе регистрации payload-команды пересекаются с legacy-потоком.
+        - Поэтому обработчик работает только если текущее FSM-состояние
+          относится именно к `RegistrationState`.
+        """
+
+        payload: dict[str, Any] = event.get_payload_json() or {}
+        command = payload.get("cmd")
+        if command not in {
+            CMD_ACCEPT_RULES,
+            CMD_GENDER_MALE,
+            CMD_GENDER_FEMALE,
+            CMD_REVIEW_OK,
+            CMD_REVIEW_EDIT,
+            CMD_EDIT_FIRST_NAME,
+            CMD_EDIT_LAST_NAME,
+            CMD_EDIT_GENDER,
+            CMD_EDIT_BIRTH_DATE,
+            CMD_EDIT_EMAIL,
+            CMD_EDIT_CANCEL,
+            CMD_NOTIFY_YES,
+            CMD_NOTIFY_NO,
+            CMD_RETRY_IIKO,
+        }:
+            return
+
+        user_id = int(event.user_id)
+        state_peer = await bot.state_dispenser.get(user_id)
+        state_value = state_peer.state if state_peer else None
+        adapter = EventMessageAdapter(event)
+
+        def in_state(state: RegistrationState) -> bool:
+            return state_value == str(state)
+
+        if command == CMD_ACCEPT_RULES and in_state(RegistrationState.WAITING_FOR_RULES_CONSENT):
+            await event.send_empty_answer()
+            logger.info("Callback: пользователь принял правила (user_id={})", user_id)
+            await db.update_user(
+                user_id,
+                rules_accepted=True,
+                rules_accepted_at=datetime.now(timezone.utc),
+            )
+            await bot.state_dispenser.set(user_id, RegistrationState.WAITING_FOR_CONTACT)
+            await edit_or_send_event_message(
+                event,
+                "✅ Спасибо! Теперь введите номер телефона в формате +79991234567.",
+            )
+            return
+
+        if command in {CMD_GENDER_MALE, CMD_GENDER_FEMALE} and in_state(RegistrationState.WAITING_FOR_GENDER):
+            await event.send_empty_answer()
+            gender = "male" if command == CMD_GENDER_MALE else "female"
+            logger.info("Callback: выбран пол в регистрации (user_id={}, gender={})", user_id, gender)
+            await db.update_user(user_id, gender=gender)
+            await bot.state_dispenser.set(user_id, RegistrationState.WAITING_FOR_BIRTH_DATE)
+            await edit_or_send_event_message(event, "🎂 Введите дату рождения в формате ДД.ММ.ГГГГ.")
+            return
+
+        if command in {CMD_GENDER_MALE, CMD_GENDER_FEMALE} and in_state(RegistrationState.WAITING_FOR_EDIT_GENDER):
+            await event.send_empty_answer()
+            gender = "male" if command == CMD_GENDER_MALE else "female"
+            logger.info("Callback: обновлён пол в анкете (user_id={}, gender={})", user_id, gender)
+            await db.update_user(user_id, gender=gender)
+            await bot.state_dispenser.set(user_id, RegistrationState.WAITING_FOR_REVIEW)
+            await edit_or_send_event_message(
+                event,
+                await get_profile_review_text(user_id),
+                keyboard=get_review_keyboard(),
+            )
+            return
+
+        if command == CMD_REVIEW_OK and in_state(RegistrationState.WAITING_FOR_REVIEW):
+            await event.send_empty_answer()
+            logger.info("Callback: анкета подтверждена пользователем (user_id={})", user_id)
+            await bot.state_dispenser.set(user_id, RegistrationState.WAITING_FOR_NOTIFICATIONS_CONSENT)
+            await edit_or_send_event_message(
+                event,
+                "📢 Ознакомьтесь с условиями уведомлений и выберите вариант:",
+                keyboard=get_notifications_keyboard(),
+            )
+            return
+
+        if command == CMD_REVIEW_EDIT and in_state(RegistrationState.WAITING_FOR_REVIEW):
+            await event.send_empty_answer()
+            logger.info("Callback: пользователь открыл редактирование анкеты (user_id={})", user_id)
+            await bot.state_dispenser.set(user_id, RegistrationState.WAITING_FOR_EDIT_CHOICE)
+            await edit_or_send_event_message(
+                event,
+                "✏️ Выберите поле для редактирования:",
+                keyboard=get_edit_choice_keyboard(),
+            )
+            return
+
+        if in_state(RegistrationState.WAITING_FOR_EDIT_CHOICE) and command in {
+            CMD_EDIT_FIRST_NAME,
+            CMD_EDIT_LAST_NAME,
+            CMD_EDIT_GENDER,
+            CMD_EDIT_BIRTH_DATE,
+            CMD_EDIT_EMAIL,
+            CMD_EDIT_CANCEL,
+        }:
+            await event.send_empty_answer()
+            logger.debug("Callback: выбор поля редактирования (user_id={}, cmd={})", user_id, command)
+            if command == CMD_EDIT_CANCEL:
+                await bot.state_dispenser.set(user_id, RegistrationState.WAITING_FOR_REVIEW)
+                await edit_or_send_event_message(
+                    event,
+                    await get_profile_review_text(user_id),
+                    keyboard=get_review_keyboard(),
+                )
+                return
+            if command == CMD_EDIT_FIRST_NAME:
+                await bot.state_dispenser.set(user_id, RegistrationState.WAITING_FOR_EDIT_FIRST_NAME)
+                await edit_or_send_event_message(event, "👤 Введите новое имя.")
+                return
+            if command == CMD_EDIT_LAST_NAME:
+                await bot.state_dispenser.set(user_id, RegistrationState.WAITING_FOR_EDIT_LAST_NAME)
+                await edit_or_send_event_message(event, "👥 Введите новую фамилию.")
+                return
+            if command == CMD_EDIT_GENDER:
+                await bot.state_dispenser.set(user_id, RegistrationState.WAITING_FOR_EDIT_GENDER)
+                await edit_or_send_event_message(event, "⚥ Выберите пол.", keyboard=get_gender_keyboard())
+                return
+            if command == CMD_EDIT_BIRTH_DATE:
+                await bot.state_dispenser.set(user_id, RegistrationState.WAITING_FOR_EDIT_BIRTH_DATE)
+                await edit_or_send_event_message(event, "🎂 Введите новую дату рождения в формате ДД.ММ.ГГГГ.")
+                return
+            if command == CMD_EDIT_EMAIL:
+                await bot.state_dispenser.set(user_id, RegistrationState.WAITING_FOR_EDIT_EMAIL)
+                await edit_or_send_event_message(event, "📧 Введите новый email.")
+                return
+
+        if command in {CMD_NOTIFY_YES, CMD_NOTIFY_NO} and in_state(RegistrationState.WAITING_FOR_NOTIFICATIONS_CONSENT):
+            await event.send_empty_answer()
+            allowed = command == CMD_NOTIFY_YES
+            logger.info(
+                "Callback: выбор уведомлений в регистрации (user_id={}, notifications_allowed={})",
+                user_id,
+                allowed,
+            )
+            await db.update_user(
+                user_id,
+                notifications_allowed=allowed,
+                notifications_allowed_at=datetime.now(timezone.utc),
+            )
+            await bot.state_dispenser.set(user_id, RegistrationState.WAITING_FOR_IIKO_REGISTRATION)
+            await edit_or_send_event_message(event, "⏳ Выполняю синхронизацию профиля с iiko...")
+            await _run_iiko_sync(adapter, bot)
+            return
+
+        if command == CMD_RETRY_IIKO and in_state(RegistrationState.WAITING_FOR_IIKO_REGISTRATION):
+            await event.send_empty_answer()
+            logger.info("Callback: повторный запуск iiko-синхронизации (user_id={})", user_id)
+            await _run_iiko_sync(adapter, bot)

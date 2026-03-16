@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import List
 
-from vkbottle import Callback, Keyboard, KeyboardButtonColor, Text
+from vkbottle import Callback, Keyboard, KeyboardButtonColor
 
 from app.database.models import Ticket
 from app.keyboards.payloads import (

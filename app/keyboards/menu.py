@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from vkbottle import Callback, Keyboard, KeyboardButtonColor, OpenLink, Text
+from vkbottle import Callback, Keyboard, KeyboardButtonColor, OpenLink
 
 from app.keyboards.payloads import (
     CMD_BACK_TO_MAIN,
@@ -26,7 +26,7 @@ def get_main_menu_keyboard() -> str:
     keyboard.add(Callback("💰 Мой баланс", payload={"cmd": CMD_BALANCE}), color=KeyboardButtonColor.PRIMARY)
     keyboard.row()
     keyboard.add(
-        Text("🪪 Виртуальная карта", payload={"cmd": CMD_VIRTUAL_CARD}),
+        Callback("🪪 Виртуальная карта", payload={"cmd": CMD_VIRTUAL_CARD}),
         color=KeyboardButtonColor.PRIMARY,
     )
     keyboard.row()
