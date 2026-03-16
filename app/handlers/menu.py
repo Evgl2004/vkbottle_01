@@ -9,8 +9,11 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from loguru import logger
-from vkbottle.bot import Bot, Message
+from vkbottle.bot import Bot, Message, MessageEvent
+from vkbottle_types.events import GroupEventType
 
 from app.database import db
 from app.keyboards.menu import (
@@ -56,6 +59,83 @@ async def show_support_menu(message: Message) -> None:
     count = await ticket_service.get_user_tickets_count(user_id)
     logger.debug("Показ меню поддержки (user_id={}, tickets_count={})", user_id, count)
     await message.answer(
+        "🆘 Раздел «Отдел заботы».\nВыберите действие:",
+        keyboard=get_support_keyboard(has_tickets=count > 0),
+    )
+
+
+async def _edit_or_send_event_message(
+    event: MessageEvent,
+    text: str,
+    *,
+    keyboard: str | None = None,
+) -> None:
+    """Пытается отредактировать текущее сообщение меню, иначе отправляет новое.
+
+    Поведение приближает UX к Telegram-референсу:
+    - при нажатии inline callback происходит перерисовка существующего меню;
+    - если редактирование недоступно (например, нет `conversation_message_id`),
+      выполняется безопасный fallback на обычную отправку сообщения.
+    """
+
+    try:
+        if event.conversation_message_id is not None:
+            await event.edit_message(message=text, keyboard=keyboard)
+            return
+    except Exception as error:
+        logger.debug(
+            "Не удалось отредактировать сообщение по message_event, fallback на send_message (peer_id={}, error={})",
+            event.peer_id,
+            error,
+        )
+
+    await event.send_message(message=text, keyboard=keyboard)
+
+
+async def _show_main_menu_event(event: MessageEvent) -> None:
+    """Показывает/перерисовывает главное меню в callback-режиме."""
+
+    user_id = int(event.user_id)
+    user = await db.get_user(user_id)
+    if not user:
+        await _edit_or_send_event_message(
+            event,
+            "❌ Профиль не найден. Введите /start для повторной инициализации.",
+            keyboard=get_back_to_main_keyboard(),
+        )
+        return
+
+    if user.is_legacy or not user.rules_accepted or not user.is_registered:
+        await _edit_or_send_event_message(
+            event,
+            "⚠️ Чтобы открыть главное меню, сначала завершите регистрацию через /start.",
+            keyboard=get_back_to_main_keyboard(),
+        )
+        return
+
+    await _edit_or_send_event_message(
+        event,
+        f"👋 Здравствуйте, {user.first_name_input or 'Гость'}!\nВы в главном меню. Выберите раздел:",
+        keyboard=get_main_menu_keyboard(),
+    )
+
+
+async def _show_support_menu_event(event: MessageEvent) -> None:
+    """Показывает/перерисовывает меню поддержки в callback-режиме."""
+
+    user_id = int(event.user_id)
+    user = await db.get_user(user_id)
+    if not user or user.is_legacy or not user.rules_accepted or not user.is_registered:
+        await _edit_or_send_event_message(
+            event,
+            "⚠️ Раздел поддержки доступен после завершения регистрации. Введите /start.",
+            keyboard=get_back_to_main_keyboard(),
+        )
+        return
+
+    count = await ticket_service.get_user_tickets_count(user_id)
+    await _edit_or_send_event_message(
+        event,
         "🆘 Раздел «Отдел заботы».\nВыберите действие:",
         keyboard=get_support_keyboard(has_tickets=count > 0),
     )
@@ -325,3 +405,126 @@ def register_menu_handlers(bot: Bot) -> None:
             "Модератор увидит обращение и ответит в ближайшее время.",
             keyboard=get_back_to_support_keyboard(),
         )
+
+    @bot.on.raw_event(GroupEventType.MESSAGE_EVENT, dataclass=MessageEvent)
+    async def menu_callback_router(event: MessageEvent) -> None:
+        """Обрабатывает callback-кнопки меню через `message_event`.
+
+        Этот роутер нужен для UX в стиле Telegram:
+        - пользователь нажимает inline callback;
+        - бот перерисовывает текущее сообщение меню вместо отправки новой реплики.
+        """
+
+        payload: dict[str, Any] = event.get_payload_json() or {}
+        command = payload.get("cmd")
+        if command not in {
+            CMD_MAIN_MENU,
+            CMD_BACK_TO_MAIN,
+            CMD_SUPPORT,
+            CMD_BACK_TO_SUPPORT,
+            CMD_BALANCE,
+            CMD_VACANCIES,
+            CMD_SUPPORT_FEEDBACK,
+            CMD_SUPPORT_CONTACTS,
+            CMD_SUPPORT_QUESTION,
+        }:
+            return
+
+        # Подтверждаем callback, чтобы на клиенте не висело состояние ожидания.
+        await event.send_empty_answer()
+        logger.debug(
+            "Обработка menu callback (user_id={}, peer_id={}, cmd={})",
+            int(event.user_id),
+            int(event.peer_id),
+            command,
+        )
+
+        if command in {CMD_MAIN_MENU, CMD_BACK_TO_MAIN}:
+            await bot.state_dispenser.delete(int(event.user_id))
+            await _show_main_menu_event(event)
+            return
+
+        if command in {CMD_SUPPORT, CMD_BACK_TO_SUPPORT}:
+            await bot.state_dispenser.delete(int(event.user_id))
+            await _show_support_menu_event(event)
+            return
+
+        if command == CMD_BALANCE:
+            user = await db.get_user(int(event.user_id))
+            if not user or not user.phone_number:
+                await _edit_or_send_event_message(
+                    event,
+                    "❌ Номер телефона не найден. Пожалуйста, пройдите регистрацию заново через /start.",
+                    keyboard=get_back_to_main_keyboard(),
+                )
+                return
+
+            info = await iiko_service.get_customer_info(user.phone_number)
+            if not info:
+                await _edit_or_send_event_message(
+                    event,
+                    "❌ Не удалось получить баланс бонусов. Попробуйте позже.",
+                    keyboard=get_back_to_main_keyboard(),
+                )
+                return
+
+            balance = info.get("balance", 0)
+            logger.info("Показан бонусный баланс через callback (user_id={}, balance={})", int(event.user_id), balance)
+            await _edit_or_send_event_message(
+                event,
+                "\n".join(
+                    [
+                        "💰 Ваш бонусный баланс:",
+                        f"• Доступно бонусов: {balance}",
+                        f"• Программа: {info.get('program_name') or 'не указана'}",
+                    ]
+                ),
+                keyboard=get_back_to_main_keyboard(),
+            )
+            return
+
+        if command == CMD_VACANCIES:
+            await _edit_or_send_event_message(
+                event,
+                "\n".join(
+                    [
+                        "💼 Вакансии:",
+                        "Мы ищем ответственных и энергичных сотрудников.",
+                        "Подробности: https://team.sobolevalliance.su/vacancy",
+                    ]
+                ),
+                keyboard=get_back_to_main_keyboard(),
+            )
+            return
+
+        if command == CMD_SUPPORT_FEEDBACK:
+            await _edit_or_send_event_message(
+                event,
+                "✍️ Оставить отзыв можно по кнопке ниже.",
+                keyboard=get_feedback_link_keyboard(),
+            )
+            return
+
+        if command == CMD_SUPPORT_CONTACTS:
+            await _edit_or_send_event_message(
+                event,
+                "\n".join(
+                    [
+                        "📇 Контакты:",
+                        "• Почта: info@sobolev.rest",
+                        "• Сайт: https://sobolevalliance.su",
+                        "• Соцсети: @sobolevalliance",
+                    ]
+                ),
+                keyboard=get_back_to_support_keyboard(),
+            )
+            return
+
+        if command == CMD_SUPPORT_QUESTION:
+            await bot.state_dispenser.set(int(event.user_id), TicketState.WAITING_FOR_QUESTION)
+            await _edit_or_send_event_message(
+                event,
+                "❓ Опишите ваш вопрос одним сообщением.\n"
+                "Модератор увидит обращение и ответит в ближайшее время.",
+                keyboard=get_back_to_support_keyboard(),
+            )

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from vkbottle import Keyboard, KeyboardButtonColor, OpenLink, Text
+from vkbottle import Callback, Keyboard, KeyboardButtonColor, OpenLink, Text
 
 from app.keyboards.payloads import (
     CMD_BACK_TO_MAIN,
@@ -22,17 +22,17 @@ from app.keyboards.payloads import (
 def get_main_menu_keyboard() -> str:
     """Основная клавиатура навигации по разделам бота."""
 
-    keyboard = Keyboard(one_time=False, inline=False)
-    keyboard.add(Text("💰 Мой баланс", payload={"cmd": CMD_BALANCE}), color=KeyboardButtonColor.PRIMARY)
+    keyboard = Keyboard(one_time=False, inline=True)
+    keyboard.add(Callback("💰 Мой баланс", payload={"cmd": CMD_BALANCE}), color=KeyboardButtonColor.PRIMARY)
     keyboard.row()
     keyboard.add(
         Text("🪪 Виртуальная карта", payload={"cmd": CMD_VIRTUAL_CARD}),
         color=KeyboardButtonColor.PRIMARY,
     )
     keyboard.row()
-    keyboard.add(Text("🆘 Отдел заботы", payload={"cmd": CMD_SUPPORT}), color=KeyboardButtonColor.PRIMARY)
+    keyboard.add(Callback("🆘 Отдел заботы", payload={"cmd": CMD_SUPPORT}), color=KeyboardButtonColor.PRIMARY)
     keyboard.row()
-    keyboard.add(Text("💼 Вакансии", payload={"cmd": CMD_VACANCIES}), color=KeyboardButtonColor.SECONDARY)
+    keyboard.add(Callback("💼 Вакансии", payload={"cmd": CMD_VACANCIES}), color=KeyboardButtonColor.SECONDARY)
     return keyboard.get_json()
 
 
@@ -43,14 +43,14 @@ def get_support_keyboard(has_tickets: bool) -> str:
     - `has_tickets`: если `True`, добавляется кнопка «Мои обращения».
     """
 
-    keyboard = Keyboard(one_time=False, inline=False)
+    keyboard = Keyboard(one_time=False, inline=True)
     keyboard.add(
-        Text("✍️ Оставить отзыв", payload={"cmd": CMD_SUPPORT_FEEDBACK}),
+        Callback("✍️ Оставить отзыв", payload={"cmd": CMD_SUPPORT_FEEDBACK}),
         color=KeyboardButtonColor.SECONDARY,
     )
     keyboard.row()
     keyboard.add(
-        Text("❓ Мне только спросить", payload={"cmd": CMD_SUPPORT_QUESTION}),
+        Callback("❓ Мне только спросить", payload={"cmd": CMD_SUPPORT_QUESTION}),
         color=KeyboardButtonColor.PRIMARY,
     )
     if has_tickets:
@@ -61,12 +61,12 @@ def get_support_keyboard(has_tickets: bool) -> str:
         )
     keyboard.row()
     keyboard.add(
-        Text("📇 Контакты", payload={"cmd": CMD_SUPPORT_CONTACTS}),
+        Callback("📇 Контакты", payload={"cmd": CMD_SUPPORT_CONTACTS}),
         color=KeyboardButtonColor.SECONDARY,
     )
     keyboard.row()
     keyboard.add(
-        Text("🔙 В главное меню", payload={"cmd": CMD_BACK_TO_MAIN}),
+        Callback("🔙 В главное меню", payload={"cmd": CMD_BACK_TO_MAIN}),
         color=KeyboardButtonColor.NEGATIVE,
     )
     return keyboard.get_json()
@@ -75,9 +75,9 @@ def get_support_keyboard(has_tickets: bool) -> str:
 def get_back_to_main_keyboard() -> str:
     """Клавиатура с одной кнопкой возврата в главное меню."""
 
-    keyboard = Keyboard(inline=False)
+    keyboard = Keyboard(inline=True)
     keyboard.add(
-        Text("🔙 В главное меню", payload={"cmd": CMD_MAIN_MENU}),
+        Callback("🔙 В главное меню", payload={"cmd": CMD_MAIN_MENU}),
         color=KeyboardButtonColor.PRIMARY,
     )
     return keyboard.get_json()
@@ -86,9 +86,9 @@ def get_back_to_main_keyboard() -> str:
 def get_back_to_support_keyboard() -> str:
     """Клавиатура с кнопкой возврата в раздел поддержки."""
 
-    keyboard = Keyboard(inline=False)
+    keyboard = Keyboard(inline=True)
     keyboard.add(
-        Text("🔙 В отдел заботы", payload={"cmd": CMD_BACK_TO_SUPPORT}),
+        Callback("🔙 В отдел заботы", payload={"cmd": CMD_BACK_TO_SUPPORT}),
         color=KeyboardButtonColor.PRIMARY,
     )
     return keyboard.get_json()
@@ -101,7 +101,7 @@ def get_feedback_link_keyboard() -> str:
     keyboard.add(OpenLink("https://example.com/feedback", "📝 Открыть форму обратной связи"))
     keyboard.row()
     keyboard.add(
-        Text("🔙 В отдел заботы", payload={"cmd": CMD_BACK_TO_SUPPORT}),
+        Callback("🔙 В отдел заботы", payload={"cmd": CMD_BACK_TO_SUPPORT}),
         color=KeyboardButtonColor.SECONDARY,
     )
     return keyboard.get_json()
