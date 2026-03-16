@@ -470,7 +470,7 @@ def register_legacy_handlers(bot: Bot) -> None:
         logger.info("Legacy: повторный запуск iiko-синхронизации (user_id={})", int(message.from_id))
         await _run_iiko_sync(message, bot)
 
-    @bot.on.raw_event(GroupEventType.MESSAGE_EVENT, dataclass=MessageEvent)
+    @bot.on.raw_event(GroupEventType.MESSAGE_EVENT, dataclass=MessageEvent, blocking=False)
     async def legacy_callback_router(event: MessageEvent) -> None:
         """Обрабатывает callback-кнопки legacy-апгрейда.
 

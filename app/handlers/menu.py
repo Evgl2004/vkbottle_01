@@ -395,7 +395,7 @@ def register_menu_handlers(bot: Bot) -> None:
             keyboard=get_back_to_support_keyboard(),
         )
 
-    @bot.on.raw_event(GroupEventType.MESSAGE_EVENT, dataclass=MessageEvent)
+    @bot.on.raw_event(GroupEventType.MESSAGE_EVENT, dataclass=MessageEvent, blocking=False)
     async def menu_callback_router(event: MessageEvent) -> None:
         """Обрабатывает callback-кнопки меню через `message_event`.
 

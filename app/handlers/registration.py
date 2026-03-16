@@ -518,7 +518,7 @@ def register_registration_handlers(bot: Bot) -> None:
         logger.info("Повторный запуск iiko-синхронизации (user_id={})", int(message.from_id))
         await _run_iiko_sync(message, bot)
 
-    @bot.on.raw_event(GroupEventType.MESSAGE_EVENT, dataclass=MessageEvent)
+    @bot.on.raw_event(GroupEventType.MESSAGE_EVENT, dataclass=MessageEvent, blocking=False)
     async def registration_callback_router(event: MessageEvent) -> None:
         """Обрабатывает callback-кнопки регистрационного сценария.
 

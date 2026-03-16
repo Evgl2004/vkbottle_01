@@ -402,7 +402,7 @@ def register_moderation_handlers(bot: Bot) -> None:
             keyboard=get_moderation_ticket_details_keyboard(ticket_id, "closed", "all"),
         )
 
-    @bot.on.raw_event(GroupEventType.MESSAGE_EVENT, dataclass=MessageEvent)
+    @bot.on.raw_event(GroupEventType.MESSAGE_EVENT, dataclass=MessageEvent, blocking=False)
     async def moderation_callback_router(event: MessageEvent) -> None:
         """Обрабатывает callback-кнопки модераторского интерфейса."""
 

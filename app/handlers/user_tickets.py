@@ -315,7 +315,7 @@ def register_user_ticket_handlers(bot: Bot) -> None:
         await bot.state_dispenser.delete(int(message.from_id))
         logger.debug("Состояние WAITING_FOR_USER_REPLY очищено (user_id={})", int(message.from_id))
 
-    @bot.on.raw_event(GroupEventType.MESSAGE_EVENT, dataclass=MessageEvent)
+    @bot.on.raw_event(GroupEventType.MESSAGE_EVENT, dataclass=MessageEvent, blocking=False)
     async def user_tickets_callback_router(event: MessageEvent) -> None:
         """Обрабатывает callback-кнопки пользовательского раздела тикетов."""
 
