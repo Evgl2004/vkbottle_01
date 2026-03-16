@@ -123,6 +123,20 @@ async def _show_support_menu_event(event: MessageEvent) -> None:
     )
 
 
+def _is_onboarding_state(state_value: str | None) -> bool:
+    """Проверяет, что пользователь находится в процессе регистрации/legacy-апгрейда.
+
+    Почему это важно:
+    - в период регистрации на экране могут оставаться старые кнопки меню;
+    - нажатие таких кнопок не должно «выбрасывать» пользователя из сценария
+      регистрации и очищать активное FSM-состояние.
+    """
+
+    if not state_value:
+        return False
+    return state_value.startswith("RegistrationState:") or state_value.startswith("LegacyState:")
+
+
 async def _send_fresh_main_menu_after_qr(event: MessageEvent) -> None:
     """Отправляет новое сообщение главного меню после выдачи QR-кодов.
 
@@ -468,6 +482,25 @@ def register_menu_handlers(bot: Bot) -> None:
                 int(event.peer_id),
                 command,
             )
+
+            state_peer = await bot.state_dispenser.get(int(event.user_id))
+            state_value = state_peer.state if state_peer else None
+            if _is_onboarding_state(state_value):
+                await edit_or_send_event_message(
+                    event,
+                    "⚠️ Сейчас вы проходите регистрацию.\n"
+                    "Завершите текущий шаг или введите /start, чтобы начать заново.",
+                    keyboard=get_back_to_main_keyboard(),
+                )
+                finish_callback_trace(
+                    "menu",
+                    event,
+                    started_at=started_at,
+                    action="blocked_by_onboarding_state",
+                    command=command,
+                    state=state_value,
+                )
+                return
 
             if command in {CMD_MAIN_MENU, CMD_BACK_TO_MAIN}:
                 await bot.state_dispenser.delete(int(event.user_id))
