@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import List
 
-from vkbottle import Keyboard, KeyboardButtonColor, Text
+from vkbottle import Callback, Keyboard, KeyboardButtonColor, Text
 
 from app.database.models import Ticket
 from app.keyboards.payloads import (
@@ -23,7 +23,7 @@ def get_user_tickets_list_keyboard(
 ) -> str:
     """Формирует клавиатуру списка тикетов пользователя с пагинацией."""
 
-    keyboard = Keyboard(inline=False)
+    keyboard = Keyboard(inline=True)
 
     for ticket in tickets:
         status_emoji = {
@@ -34,14 +34,14 @@ def get_user_tickets_list_keyboard(
         short_question = (ticket.message[:20] + "…") if len(ticket.message) > 20 else ticket.message
         label = f"{status_emoji} #{ticket.id} ({ticket.created_at.strftime('%d.%m')}): {short_question}"
         keyboard.add(
-            Text(label, payload={"cmd": CMD_USER_TICKET, "ticket_id": ticket.id}),
+            Callback(label, payload={"cmd": CMD_USER_TICKET, "ticket_id": ticket.id}),
             color=KeyboardButtonColor.SECONDARY,
         )
         keyboard.row()
 
     if current_page > 1:
         keyboard.add(
-            Text(
+            Callback(
                 "⬅️ Предыдущая",
                 payload={"cmd": CMD_USER_TICKETS_PAGE, "page": current_page - 1},
             ),
@@ -51,7 +51,7 @@ def get_user_tickets_list_keyboard(
         if current_page > 1:
             keyboard.row()
         keyboard.add(
-            Text(
+            Callback(
                 "Следующая ➡️",
                 payload={"cmd": CMD_USER_TICKETS_PAGE, "page": current_page + 1},
             ),
@@ -59,7 +59,7 @@ def get_user_tickets_list_keyboard(
         )
 
     keyboard.row()
-    keyboard.add(Text("🔙 В отдел заботы", payload={"cmd": CMD_BACK_TO_SUPPORT}))
+    keyboard.add(Callback("🔙 В отдел заботы", payload={"cmd": CMD_BACK_TO_SUPPORT}))
 
     return keyboard.get_json()
 
@@ -67,15 +67,15 @@ def get_user_tickets_list_keyboard(
 def get_user_ticket_details_keyboard(ticket_id: int, status: str) -> str:
     """Формирует клавиатуру детального просмотра тикета пользователем."""
 
-    keyboard = Keyboard(inline=False)
+    keyboard = Keyboard(inline=True)
     if status != "closed":
         keyboard.add(
-            Text("✍️ Ответить", payload={"cmd": CMD_USER_REPLY, "ticket_id": ticket_id}),
+            Callback("✍️ Ответить", payload={"cmd": CMD_USER_REPLY, "ticket_id": ticket_id}),
             color=KeyboardButtonColor.PRIMARY,
         )
         keyboard.row()
     keyboard.add(
-        Text("📋 К списку обращений", payload={"cmd": CMD_MY_TICKETS}),
+        Callback("📋 К списку обращений", payload={"cmd": CMD_MY_TICKETS}),
         color=KeyboardButtonColor.SECONDARY,
     )
     return keyboard.get_json()

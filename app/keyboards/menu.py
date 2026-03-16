@@ -56,7 +56,7 @@ def get_support_keyboard(has_tickets: bool) -> str:
     if has_tickets:
         keyboard.row()
         keyboard.add(
-            Text("📋 Мои обращения", payload={"cmd": CMD_MY_TICKETS}),
+            Callback("📋 Мои обращения", payload={"cmd": CMD_MY_TICKETS}),
             color=KeyboardButtonColor.PRIMARY,
         )
     keyboard.row()

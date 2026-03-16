@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from typing import List
+from typing import Any, List
 
 from loguru import logger
-from vkbottle.bot import Bot, Message
+from vkbottle.bot import Bot, Message, MessageEvent
+from vkbottle_types.events import GroupEventType
 
 from app.database import db
-from app.handlers.common import extract_payload, get_moderator_ids
+from app.handlers.common import edit_or_send_event_message, extract_payload, get_moderator_ids
 from app.keyboards.menu import get_back_to_main_keyboard, get_back_to_support_keyboard
 from app.keyboards.payloads import (
     CMD_MY_TICKETS,
@@ -44,6 +45,48 @@ async def _notify_moderators(message: Message, text: str) -> None:
             )
         except Exception as error:
             logger.error("Не удалось уведомить модератора {}: {}", moderator_id, error)
+
+
+async def _show_user_tickets_page_event(event: MessageEvent, page: int) -> None:
+    """Отображает страницу пользовательских тикетов по callback-событию."""
+
+    user_id = int(event.user_id)
+    tickets, total_count = await ticket_service.get_tickets_page(
+        page=page,
+        per_page=5,
+        user_id=user_id,
+    )
+    if not tickets:
+        await edit_or_send_event_message(
+            event,
+            "📭 На этой странице обращений нет.",
+            keyboard=get_back_to_support_keyboard(),
+        )
+        return
+
+    total_pages = (total_count + 5 - 1) // 5
+    await edit_or_send_event_message(
+        event,
+        f"📋 Ваши обращения (страница {page}/{total_pages}):",
+        keyboard=get_user_tickets_list_keyboard(tickets, page, total_pages),
+    )
+
+
+async def _show_user_ticket_details_event(event: MessageEvent, ticket_id: int) -> None:
+    """Показывает карточку тикета пользователю по callback-событию."""
+
+    user_id = int(event.user_id)
+    ticket = await ticket_service.get_ticket(ticket_id)
+    if not ticket or ticket.user_id != user_id:
+        await edit_or_send_event_message(event, "❌ Тикет не найден или доступ запрещён.")
+        return
+
+    history = await ticket_service.get_ticket_messages(ticket_id)
+    await edit_or_send_event_message(
+        event,
+        format_ticket_details(ticket, history),
+        keyboard=get_user_ticket_details_keyboard(ticket_id, ticket.status),
+    )
 
 
 def register_user_ticket_handlers(bot: Bot) -> None:
@@ -271,3 +314,69 @@ def register_user_ticket_handlers(bot: Bot) -> None:
         )
         await bot.state_dispenser.delete(int(message.from_id))
         logger.debug("Состояние WAITING_FOR_USER_REPLY очищено (user_id={})", int(message.from_id))
+
+    @bot.on.raw_event(GroupEventType.MESSAGE_EVENT, dataclass=MessageEvent)
+    async def user_tickets_callback_router(event: MessageEvent) -> None:
+        """Обрабатывает callback-кнопки пользовательского раздела тикетов."""
+
+        payload: dict[str, Any] = event.get_payload_json() or {}
+        command = payload.get("cmd")
+        if command not in {CMD_MY_TICKETS, CMD_USER_TICKETS_PAGE, CMD_USER_TICKET, CMD_USER_REPLY}:
+            return
+
+        await event.send_empty_answer()
+        user_id = int(event.user_id)
+        logger.debug(
+            "user_tickets callback (user_id={}, peer_id={}, cmd={}, payload={})",
+            user_id,
+            int(event.peer_id),
+            command,
+            payload,
+        )
+
+        if command == CMD_MY_TICKETS:
+            await _show_user_tickets_page_event(event, page=1)
+            return
+
+        if command == CMD_USER_TICKETS_PAGE:
+            try:
+                page = max(int(payload.get("page", 1)), 1)
+            except (TypeError, ValueError):
+                page = 1
+            await _show_user_tickets_page_event(event, page=page)
+            return
+
+        if command == CMD_USER_TICKET:
+            try:
+                ticket_id = int(payload.get("ticket_id"))
+            except (TypeError, ValueError):
+                await edit_or_send_event_message(event, "⚠️ Не удалось определить тикет.")
+                return
+            await _show_user_ticket_details_event(event, ticket_id=ticket_id)
+            return
+
+        if command == CMD_USER_REPLY:
+            try:
+                ticket_id = int(payload.get("ticket_id"))
+            except (TypeError, ValueError):
+                await edit_or_send_event_message(event, "⚠️ Не удалось определить тикет.")
+                return
+
+            ticket = await ticket_service.get_ticket(ticket_id)
+            if not ticket or ticket.user_id != user_id:
+                await edit_or_send_event_message(event, "❌ Тикет не найден или доступ запрещён.")
+                return
+            if ticket.status == "closed":
+                await edit_or_send_event_message(event, "🔒 Тикет уже закрыт. Отправка нового ответа невозможна.")
+                return
+
+            await bot.state_dispenser.set(
+                user_id,
+                TicketState.WAITING_FOR_USER_REPLY,
+                ticket_id=ticket_id,
+            )
+            await edit_or_send_event_message(
+                event,
+                f"✍️ Введите ответ для тикета #{ticket_id}.",
+                keyboard=get_user_ticket_details_keyboard(ticket_id, ticket.status),
+            )

@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Dict, Iterable, Set
 
 from loguru import logger
-from vkbottle.bot import Message
+from vkbottle.bot import Message, MessageEvent
 
 from app.config import settings
 from app.database import db
@@ -65,3 +65,31 @@ async def get_moderator_ids() -> Set[int]:
         len(result),
     )
     return result
+
+
+async def edit_or_send_event_message(
+    event: MessageEvent,
+    text: str,
+    *,
+    keyboard: str | None = None,
+) -> None:
+    """Пытается отредактировать сообщение callback-события, иначе отправляет новое.
+
+    Используется в `message_event`-обработчиках для UX в стиле Telegram:
+    - сперва пробуем `messages.edit` по `conversation_message_id`;
+    - если редактирование невозможно, выполняем fallback на `messages.send`.
+    """
+
+    try:
+        if event.conversation_message_id is not None:
+            await event.edit_message(message=text, keyboard=keyboard)
+            return
+    except Exception as error:
+        logger.debug(
+            "edit_or_send_event_message: edit failed, fallback to send (peer_id={}, cmid={}, error={})",
+            event.peer_id,
+            event.conversation_message_id,
+            error,
+        )
+
+    await event.send_message(message=text, keyboard=keyboard)
