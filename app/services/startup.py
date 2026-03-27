@@ -138,6 +138,7 @@ async def prepare_runtime() -> None:
     """
 
     logger.info("Подготовка инфраструктуры: старт")
+    logger.info("URL базы данных: {}", settings.async_database_url)
 
     await db.create_tables()
     await db.update_bot_stats()

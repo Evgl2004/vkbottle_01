@@ -4,6 +4,8 @@ services:
     container_name: vkbottle_bot_dev
     env_file:
       - .env
+    environment:
+      POSTGRES_PORT: 5432
     depends_on:
       postgres:
         condition: service_healthy
@@ -27,7 +29,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-vkbot}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me}
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql:ro

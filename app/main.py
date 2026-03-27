@@ -110,9 +110,9 @@ def main() -> None:
         else:
             logger.info("Веб-сервер Mini App отключён в настройках")
 
-    bot.loop_wrapper.on_startup.append(prepare_runtime())
+    bot.loop_wrapper.on_startup.append(prepare_runtime)
     bot.loop_wrapper.on_startup.append(start_web_server_if_enabled)
-    bot.loop_wrapper.on_shutdown.append(shutdown_infrastructure(state_dispenser))
+    bot.loop_wrapper.on_shutdown.append(lambda: shutdown_infrastructure(state_dispenser))
     logger.debug("Startup/Shutdown корутины зарегистрированы в LoopWrapper")
 
     bot.run_forever()
