@@ -20,10 +20,13 @@ os.environ.setdefault("LOGURU_AUTOINIT", "1")
 from loguru import logger
 from vkbottle.bot import Bot
 
+import asyncio
+
 from app.config import settings
 from app.handlers import setup_handlers
 from app.services import prepare_runtime, shutdown_infrastructure
 from app.services.state_dispenser import RedisStateDispenser
+from app.web.server import run_web_server_in_background
 
 
 def _log_filter(record: dict[str, Any]) -> bool:
@@ -93,7 +96,22 @@ def main() -> None:
     setup_handlers(bot)
     logger.debug("Экземпляр Bot инициализирован")
 
+    async def start_web_server_if_enabled():
+        """Запускает веб-сервер для Mini App, если он включён в настройках."""
+        if settings.web_enabled:
+            logger.info("Веб-сервер Mini App включён, запускаем...")
+            # Получаем текущий event loop
+            loop = asyncio.get_running_loop()
+            # Запускаем веб-сервер в фоне
+            task = run_web_server_in_background(loop)
+            # Сохраняем задачу, чтобы можно было её отменить на shutdown
+            # (пока просто оставляем работать)
+            await asyncio.sleep(0)  # yield control
+        else:
+            logger.info("Веб-сервер Mini App отключён в настройках")
+
     bot.loop_wrapper.on_startup.append(prepare_runtime())
+    bot.loop_wrapper.on_startup.append(start_web_server_if_enabled)
     bot.loop_wrapper.on_shutdown.append(shutdown_infrastructure(state_dispenser))
     logger.debug("Startup/Shutdown корутины зарегистрированы в LoopWrapper")
 

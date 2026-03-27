@@ -27,6 +27,9 @@ CMD_EDIT_CANCEL = "edit_cancel"
 CMD_NOTIFY_YES = "notify_yes"
 CMD_NOTIFY_NO = "notify_no"
 CMD_RETRY_IIKO = "retry_iiko"
+CMD_PHONE_MANUAL = "phone_manual"
+CMD_PHONE_VIA_MINI_APP = "phone_via_mini_app"
+CMD_OPEN_MINI_APP = "open_mini_app"
 
 # Главное меню
 CMD_BALANCE = "balance"

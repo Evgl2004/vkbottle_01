@@ -101,6 +101,35 @@ def get_edit_choice_keyboard() -> str:
     return keyboard.get_json()
 
 
+def get_phone_method_keyboard() -> str:
+    """Клавиатура выбора способа подтверждения телефона."""
+
+    keyboard = Keyboard(inline=True)
+    keyboard.add(
+        Callback("📱 Ввести номер вручную", payload={"cmd": CMD_PHONE_MANUAL}),
+        color=KeyboardButtonColor.PRIMARY,
+    )
+    keyboard.row()
+    keyboard.add(
+        Callback("🚀 Подтвердить через VK Mini App", payload={"cmd": CMD_PHONE_VIA_MINI_APP}),
+        color=KeyboardButtonColor.POSITIVE,
+    )
+    return keyboard.get_json()
+
+
+def get_open_mini_app_keyboard(link: str) -> str:
+    """Клавиатура с кнопкой открытия Mini App."""
+
+    keyboard = Keyboard(inline=True)
+    keyboard.add(OpenLink(link, "📲 Открыть Mini App"))
+    keyboard.row()
+    keyboard.add(
+        Callback("🔙 Вернуться к выбору способа", payload={"cmd": CMD_PHONE_MANUAL}),
+        color=KeyboardButtonColor.SECONDARY,
+    )
+    return keyboard.get_json()
+
+
 def get_retry_iiko_keyboard() -> str:
     """Клавиатура повторной попытки синхронизации с iiko."""
 

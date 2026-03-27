@@ -23,6 +23,8 @@ from app.keyboards.registration import (
     get_edit_choice_keyboard,
     get_gender_keyboard,
     get_notifications_keyboard,
+    get_open_mini_app_keyboard,
+    get_phone_method_keyboard,
     get_retry_iiko_keyboard,
     get_review_keyboard,
 )
@@ -38,10 +40,14 @@ from app.keyboards.payloads import (
     CMD_GENDER_MALE,
     CMD_NOTIFY_NO,
     CMD_NOTIFY_YES,
+    CMD_OPEN_MINI_APP,
+    CMD_PHONE_MANUAL,
+    CMD_PHONE_VIA_MINI_APP,
     CMD_RETRY_IIKO,
     CMD_REVIEW_EDIT,
     CMD_REVIEW_OK,
 )
+from app.services.mini_app import create_state_token, generate_mini_app_link
 from app.services.user_sync import sync_user_with_iiko
 from app.services.vk_qr import send_card_qr
 from app.states.registration import RegistrationState
@@ -161,7 +167,7 @@ def register_registration_handlers(bot: Bot) -> None:
         state=RegistrationState.WAITING_FOR_RULES_CONSENT,
     )
     async def process_rules_consent(message: Message) -> None:
-        """Фиксирует согласие с правилами и переводит на шаг ввода телефона."""
+        """Фиксирует согласие с правилами и предлагает выбрать способ подтверждения телефона."""
 
         user_id = int(message.from_id)
         logger.info("Пользователь принял правила (user_id={})", user_id)
@@ -171,10 +177,96 @@ def register_registration_handlers(bot: Bot) -> None:
             rules_accepted=True,
             rules_accepted_at=datetime.now(timezone.utc),
         )
+        await bot.state_dispenser.set(user_id, RegistrationState.WAITING_FOR_PHONE_METHOD)
+        logger.debug("Переход в WAITING_FOR_PHONE_METHOD (user_id={})", user_id)
+        await message.answer(
+            "✅ Спасибо! Теперь нужно подтвердить номер телефона.\n"
+            "Выберите способ подтверждения:",
+            keyboard=get_phone_method_keyboard(),
+        )
+
+    @bot.on.private_message(
+        payload_contains={"cmd": CMD_PHONE_MANUAL},
+        state=RegistrationState.WAITING_FOR_PHONE_METHOD,
+    )
+    async def process_phone_manual(message: Message) -> None:
+        """Пользователь выбрал ручной ввод телефона."""
+        user_id = int(message.from_id)
+        logger.info("Выбран ручной ввод телефона (user_id={})", user_id)
         await bot.state_dispenser.set(user_id, RegistrationState.WAITING_FOR_CONTACT)
         logger.debug("Переход в WAITING_FOR_CONTACT (user_id={})", user_id)
         await message.answer(
-            "✅ Спасибо! Теперь введите номер телефона в формате +79991234567."
+            "📱 Введите номер телефона текстом (пример: +79991234567).\n"
+            "Номер будет использоваться для идентификации в системе."
+        )
+
+    @bot.on.private_message(
+        payload_contains={"cmd": CMD_PHONE_VIA_MINI_APP},
+        state=RegistrationState.WAITING_FOR_PHONE_METHOD,
+    )
+    async def process_phone_via_mini_app(message: Message) -> None:
+        """Пользователь выбрал подтверждение через VK Mini App."""
+        user_id = int(message.from_id)
+        logger.info("Выбрано подтверждение через Mini App (user_id={})", user_id)
+
+        # Генерируем state_token и ссылку
+        token = await create_state_token(user_id)
+        link = generate_mini_app_link(token)
+        logger.debug("Сгенерирован state_token (user_id={}, token={})", user_id, token)
+
+        await bot.state_dispenser.set(user_id, RegistrationState.WAITING_FOR_PHONE_VIA_MINI_APP)
+        logger.debug("Переход в WAITING_FOR_PHONE_VIA_MINI_APP (user_id={})", user_id)
+        await message.answer(
+            "📲 Откройте мини-приложение для подтверждения номера телефона.\n"
+            "В нём вы сможете безопасно передать номер без ручного ввода.",
+            keyboard=get_open_mini_app_keyboard(link),
+        )
+
+    @bot.on.private_message(
+        payload_contains={"cmd": CMD_OPEN_MINI_APP},
+        state=RegistrationState.WAITING_FOR_PHONE_VIA_MINI_APP,
+    )
+    async def reopen_mini_app(message: Message) -> None:
+        """Повторно отправляет ссылку на Mini App."""
+        user_id = int(message.from_id)
+        logger.info("Повторный запрос ссылки на Mini App (user_id={})", user_id)
+        token = await create_state_token(user_id)
+        link = generate_mini_app_link(token)
+        await message.answer(
+            "🔗 Вот актуальная ссылка для подтверждения телефона:",
+            keyboard=get_open_mini_app_keyboard(link),
+        )
+
+    @bot.on.private_message(state=RegistrationState.WAITING_FOR_PHONE_VIA_MINI_APP)
+    async def check_phone_confirmation(message: Message) -> None:
+        """Проверяет, подтвердил ли пользователь телефон через Mini App.
+
+        Если флаг подтверждения установлен в Redis, переводит к следующему шагу.
+        Иначе напоминает о необходимости подтверждения.
+        """
+        from app.services.mini_app import is_phone_verified
+
+        user_id = int(message.from_id)
+        logger.debug("Проверка подтверждения телефона (user_id={})", user_id)
+
+        if await is_phone_verified(user_id):
+            logger.info("Телефон подтверждён через Mini App (user_id={})", user_id)
+            # Сохраняем телефон в БД (телефон уже сохранён в verify_phone_from_mini_app)
+            # Переходим к следующему шагу регистрации
+            await bot.state_dispenser.set(user_id, RegistrationState.WAITING_FOR_FIRST_NAME)
+            logger.debug("Переход в WAITING_FOR_FIRST_NAME (user_id={})", user_id)
+            await message.answer(
+                "✅ Телефон успешно подтверждён! Теперь введите ваше имя."
+            )
+            return
+
+        # Если телефон ещё не подтверждён, напоминаем
+        token = await create_state_token(user_id)
+        link = generate_mini_app_link(token)
+        await message.answer(
+            "❓ Вы ещё не подтвердили номер телефона.\n"
+            "Пожалуйста, откройте мини-приложение по кнопке ниже и нажмите «Подтвердить номер».",
+            keyboard=get_open_mini_app_keyboard(link),
         )
 
     @bot.on.private_message(
@@ -559,6 +651,9 @@ def register_registration_handlers(bot: Bot) -> None:
             CMD_NOTIFY_YES,
             CMD_NOTIFY_NO,
             CMD_RETRY_IIKO,
+            CMD_PHONE_MANUAL,
+            CMD_PHONE_VIA_MINI_APP,
+            CMD_OPEN_MINI_APP,
         }:
             mark_callback_skipped(
                 "registration",
@@ -583,10 +678,52 @@ def register_registration_handlers(bot: Bot) -> None:
                 rules_accepted=True,
                 rules_accepted_at=datetime.now(timezone.utc),
             )
+            await bot.state_dispenser.set(user_id, RegistrationState.WAITING_FOR_PHONE_METHOD)
+            await edit_or_send_event_message(
+                event,
+                "✅ Спасибо! Теперь нужно подтвердить номер телефона.\n"
+                "Выберите способ подтверждения:",
+                keyboard=get_phone_method_keyboard(),
+            )
+            return
+
+        if command == CMD_PHONE_MANUAL and in_state(RegistrationState.WAITING_FOR_PHONE_METHOD):
+            await event.send_empty_answer()
+            mark_callback_matched("registration", event, command=command, state=state_value)
+            logger.info("Callback: выбран ручной ввод телефона (user_id={})", user_id)
             await bot.state_dispenser.set(user_id, RegistrationState.WAITING_FOR_CONTACT)
             await edit_or_send_event_message(
                 event,
-                "✅ Спасибо! Теперь введите номер телефона в формате +79991234567.",
+                "📱 Введите номер телефона текстом (пример: +79991234567).\n"
+                "Номер будет использоваться для идентификации в системе."
+            )
+            return
+
+        if command == CMD_PHONE_VIA_MINI_APP and in_state(RegistrationState.WAITING_FOR_PHONE_METHOD):
+            await event.send_empty_answer()
+            mark_callback_matched("registration", event, command=command, state=state_value)
+            logger.info("Callback: выбрано подтверждение через Mini App (user_id={})", user_id)
+            token = await create_state_token(user_id)
+            link = generate_mini_app_link(token)
+            await bot.state_dispenser.set(user_id, RegistrationState.WAITING_FOR_PHONE_VIA_MINI_APP)
+            await edit_or_send_event_message(
+                event,
+                "📲 Откройте мини-приложение для подтверждения номера телефона.\n"
+                "В нём вы сможете безопасно передать номер без ручного ввода.",
+                keyboard=get_open_mini_app_keyboard(link),
+            )
+            return
+
+        if command == CMD_OPEN_MINI_APP and in_state(RegistrationState.WAITING_FOR_PHONE_VIA_MINI_APP):
+            await event.send_empty_answer()
+            mark_callback_matched("registration", event, command=command, state=state_value)
+            logger.info("Callback: повторный запрос ссылки на Mini App (user_id={})", user_id)
+            token = await create_state_token(user_id)
+            link = generate_mini_app_link(token)
+            await edit_or_send_event_message(
+                event,
+                "🔗 Вот актуальная ссылка для подтверждения телефона:",
+                keyboard=get_open_mini_app_keyboard(link),
             )
             return
 

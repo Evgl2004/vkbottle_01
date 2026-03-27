@@ -11,7 +11,9 @@ class RegistrationState(BaseStateGroup):
     """
 
     WAITING_FOR_RULES_CONSENT = "waiting_for_rules_consent"
+    WAITING_FOR_PHONE_METHOD = "waiting_for_phone_method"
     WAITING_FOR_CONTACT = "waiting_for_contact"
+    WAITING_FOR_PHONE_VIA_MINI_APP = "waiting_for_phone_via_mini_app"
     WAITING_FOR_FIRST_NAME = "waiting_for_first_name"
     WAITING_FOR_LAST_NAME = "waiting_for_last_name"
     WAITING_FOR_GENDER = "waiting_for_gender"

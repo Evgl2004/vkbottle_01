@@ -45,6 +45,20 @@ class Settings(BaseSettings):
     vk_group_id: int = Field(0, alias="VK_GROUP_ID")
 
     # ----------------------------
+    # Настройки VK Mini App
+    # ----------------------------
+    vk_mini_app_id: int = Field(0, alias="VK_MINI_APP_ID")
+    vk_mini_app_secret: str = Field("", alias="VK_MINI_APP_SECRET")
+    vk_mini_app_url: str = Field("https://vk.com/app", alias="VK_MINI_APP_URL")
+
+    # ----------------------------
+    # Настройки веб-сервера (для обработки запросов от Mini App)
+    # ----------------------------
+    web_enabled: bool = Field(True, alias="WEB_ENABLED")
+    web_host: str = Field("0.0.0.0", alias="WEB_HOST")
+    web_port: int = Field(8080, alias="WEB_PORT")
+
+    # ----------------------------
     # Роли и доступ
     # ----------------------------
     admin_user_ids_raw: str = Field("", alias="ADMIN_USER_IDS")

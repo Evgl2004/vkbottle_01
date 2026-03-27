@@ -108,3 +108,27 @@ class RedisStateDispenser(ABCStateDispenser):
         """Закрывает Redis-клиент диспансера."""
         logger.debug("StateDispenser.close: закрытие Redis-клиента")
         await self.redis.aclose()
+
+
+# Глобальный Redis клиент для использования в других модулях
+_redis_client: Optional[Redis] = None
+
+
+async def get_redis_client() -> Redis:
+    """Возвращает глобальный асинхронный Redis-клиент, инициализированный из настроек.
+
+    Используется для хранения временных токенов и других данных, не связанных с FSM.
+    """
+    global _redis_client
+    if _redis_client is None:
+        from app.config import settings
+        _redis_client = Redis.from_url(settings.redis_url, decode_responses=True)
+    return _redis_client
+
+
+async def close_redis_client() -> None:
+    """Закрывает глобальный Redis-клиент (вызывается при shutdown)."""
+    global _redis_client
+    if _redis_client is not None:
+        await _redis_client.aclose()
+        _redis_client = None

@@ -174,9 +174,12 @@ async def shutdown_infrastructure(state_dispenser: RedisStateDispenser) -> None:
     Порядок остановки:
     1. Корректно закрыть iiko-клиент (aiohttp-сессию).
     2. Закрыть Redis-соединение state dispenser.
+    3. Закрыть глобальный Redis-клиент (если используется).
     """
 
     logger.info("Остановка инфраструктуры: старт")
     await iiko_service.close_iiko_client()
     await state_dispenser.close()
+    from .state_dispenser import close_redis_client
+    await close_redis_client()
     logger.info("Остановка инфраструктуры: завершена")
